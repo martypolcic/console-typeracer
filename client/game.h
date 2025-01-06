@@ -3,12 +3,14 @@
 
 #include "game.h"
 #include "terminal.h"
+#include "sourceValidator.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <time.h>
 
 void startGame();
 void results();

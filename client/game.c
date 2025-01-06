@@ -1,5 +1,4 @@
 #include "game.h"
-// Implement the game logic here
 
 // Typing game function
 void startGame() {
@@ -11,8 +10,21 @@ void startGame() {
     // int tWidth = ws.ws_col;
     // printf("Terminal size: %d rows, %d columns\n", ws.ws_row, ws.ws_col);
 
-    char *s = "Test vety haha haha";
-    char *sentence = strdup(s);
+    // Read sentences from file
+    char* sentencesFile = "../input.txt";
+    int lineCount;
+    char** sentences = readFileLines(sentencesFile, &lineCount);
+    if (sentences == NULL) {
+        printf("Failed to read file or file is empty.\n");
+        return;
+    }
+
+    // Choose a random sentence
+    srand(time(NULL));
+    int randomIndex = rand() % lineCount;
+    char *randomSentence = sentences[randomIndex];
+
+    char *sentence = strdup(randomSentence);
     int sentenceLength = strlen(sentence);
     int wordCount = 0;
     int playerWordCount = 0;
@@ -37,7 +49,7 @@ void startGame() {
 
     clearScreen();
     printf("Type the following sentence as fast as you can:\n");
-    printf("------------------------------------------------\n%s\n------------------------------------------------\n\n", s);
+    printf("------------------------------------------------\n%s\n------------------------------------------------\n\n", randomSentence);
     printf("Press Enter to start...");
     getchar();
 
@@ -117,7 +129,7 @@ void startGame() {
     setCursorVisibility(true);
 
     double timeTaken = calculateElapsedTime(startTime, endTime);
-    results(&s, &timeTaken);
+    results(&randomSentence, &timeTaken);
     gameDestroy(&wordCount, &words, &input, &sentence);
 }
 
