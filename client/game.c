@@ -36,6 +36,8 @@ void startGame(const char* inputFilePath) {
     srand(time(NULL));
     int randomIndex = rand() % sentenceCount;
     char *randomSentence = strdup(sentences[randomIndex]);
+    // trim newline character
+    randomSentence[strcspn(randomSentence, "\n")] = 0;
     int sentenceLength = strlen(randomSentence);
     printf("Random sentence: %s\n", randomSentence);
     // free sentences
