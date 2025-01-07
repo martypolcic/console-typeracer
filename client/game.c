@@ -21,11 +21,12 @@ char* deleteChar(char* str) {
     return newStr;
 }
 
-void startGame() {
+void startGame(const char* inputFilePath) {
+    printf("Starting game...\n");
     // Read sentences from file
-    char* sentencesFile = "../input.txt";
     int sentenceCount;
-    char** sentences = readFileLines(sentencesFile, &sentenceCount);
+    char** sentences = readFileLines(inputFilePath, &sentenceCount);
+    printf("Sentence count: %d\n", sentenceCount);
     if (sentences == NULL) {
         printf("Failed to read file or file is empty.\n");
         return;
@@ -34,13 +35,15 @@ void startGame() {
     // Choose a random sentence
     srand(time(NULL));
     int randomIndex = rand() % sentenceCount;
-    char *randomSentence = sentences[randomIndex];
+    char *randomSentence = strdup(sentences[randomIndex]);
     int sentenceLength = strlen(randomSentence);
+    printf("Random sentence: %s\n", randomSentence);
     // free sentences
     for (int i = 0; i < sentenceCount; i++) {
         free(sentences[i]);
     }
     free(sentences);
+    printf("Sentence length: %d\n", sentenceLength);
     // parse sentence into words
     char** words = NULL;
     int wordCount;
@@ -53,6 +56,7 @@ void startGame() {
     int charsDone = 0;
     int currentWordIndex = 0;
 
+    sleep(5);
     clearScreen();
     printf("Type the following sentence as fast as you can:\n");
     printf("------------------------------------------------\n%s\n------------------------------------------------\n\n", randomSentence);
@@ -181,4 +185,14 @@ void gameDestroy(int* wordCount, char*** words, char** playerWord) {
 // Function to calculate elapsed time in seconds
 double calculateElapsedTime(struct timeval start, struct timeval end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
+}
+
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        printf("Usage: %s <input_file_path>\n", argv[0]);
+        return 1;
+    }
+    printf("Welcome to the TypeRacer game!\n");
+    startGame(argv[1]);
+    return 0;
 }

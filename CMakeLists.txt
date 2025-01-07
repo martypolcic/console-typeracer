@@ -9,5 +9,5 @@ project(
 
 add_subdirectory(server)
 add_subdirectory(client)
-
 add_subdirectory(sockets-lib)
+add_subdirectory(cJSON-lib)
