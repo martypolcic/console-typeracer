@@ -33,6 +33,7 @@ typedef struct Game {
     pthread_t* threads;
     pthread_mutex_t* mutex;
     pthread_cond_t* startCond;
+    pthread_cond_t* finishCond;
     int wordsCount;
     int finishedPlayers;
     SocketsData* socketsData;
