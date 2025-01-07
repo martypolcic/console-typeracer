@@ -1,7 +1,4 @@
-#include "typeracerStructures.h"
-#include "cJSON.h"
-#include <stdlib.h>
-#include <string.h>
+#include "jsonHandler.h"
 
 char* serializeRefreshingData(const RefreshingData* data, int playerCount) {
     cJSON* json = cJSON_CreateObject();

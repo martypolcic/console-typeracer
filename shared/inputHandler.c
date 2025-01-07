@@ -1,5 +1,4 @@
 #include "inputHandler.h"
-#include <ctype.h>
 
 int isCharacterKey(int key) {
     return isalpha(key) || key == ',' || key == '.' || key == '?' || key == '!' || key == '\'' || key == ' ';

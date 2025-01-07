@@ -1,8 +1,4 @@
 #include "sourceValidator.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
 
 char** readFileLines(const char* fileName, int* lineCount) {
     FILE *file = fopen(fileName, "r");
@@ -20,12 +16,12 @@ char** readFileLines(const char* fileName, int* lineCount) {
         if (validateLine(line)) {
             lines = realloc(lines, sizeof(char*) * (*lineCount + 1));
             lines[*lineCount] = strdup(line);
-            free(line);
+            
             (*lineCount)++;
         }
     }
-    
     free(line);
+    
     fclose(file);
 
     return lines;

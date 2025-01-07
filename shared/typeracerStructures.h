@@ -1,3 +1,9 @@
+#ifndef TYPERACERSTRUCTURES_H
+#define TYPERACERSTRUCTURES_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <pthread.h>
 #include <sys/time.h>
 
@@ -29,6 +35,14 @@ typedef struct Game {
     pthread_cond_t* startCond;
     int wordsCount;
     int finishedPlayers;
-    SocketsData* data;
+    SocketsData* socketsData;
     RefreshingData* refreshingData;
 } Game;
+
+
+typedef struct ThreadData {
+    Game* game;
+    int playerIndex;
+} ThreadData;
+
+#endif // TYPERACERSTRUCTURES_H
