@@ -7,6 +7,7 @@ char* appendChar(char* str, char c) {
     strcpy(newStr, str);
     newStr[len] = c;
     newStr[len + 1] = '\0';
+    free(str);
     return newStr;
 }
 
@@ -16,6 +17,7 @@ char* deleteChar(char* str) {
     char *newStr = malloc(len);
     strcpy(newStr, str);
     newStr[len - 1] = '\0';
+    free(str);
     return newStr;
 }
 
@@ -34,6 +36,11 @@ void startGame() {
     int randomIndex = rand() % sentenceCount;
     char *randomSentence = sentences[randomIndex];
     int sentenceLength = strlen(randomSentence);
+    // free sentences
+    for (int i = 0; i < sentenceCount; i++) {
+        free(sentences[i]);
+    }
+    free(sentences);
     // parse sentence into words
     char** words = NULL;
     int wordCount;
@@ -41,7 +48,8 @@ void startGame() {
 
     struct timeval startTime, endTime;
     // variables
-    char* playerWord = "\0";
+    char* playerWord = malloc(1);
+    playerWord[0] = '\0';
     int charsDone = 0;
     int currentWordIndex = 0;
 
@@ -125,7 +133,9 @@ void startGame() {
             
             if (playerInput == ' ' && strcmp(playerWord, words[currentWordIndex]) == 0) {
                 currentWordIndex++;
-                playerWord = "\0";
+                free(playerWord);
+                playerWord = malloc(1);
+                playerWord[0] = '\0';
             } else {
                 // append character to playerWord
                 if (currentPrintWordIndex == wordCount -1 && typedChars == strlen(words[currentPrintWordIndex])) {
@@ -148,7 +158,7 @@ void startGame() {
 
     double timeTaken = calculateElapsedTime(startTime, endTime);
     results(&randomSentence, &timeTaken);
-    gameDestroy(&wordCount, &words);
+    gameDestroy(&wordCount, &words, &playerWord);
 }
 
 void results(char** s, double* timeTaken) {
@@ -158,11 +168,14 @@ void results(char** s, double* timeTaken) {
     printf("Words per minute: %.2f\n", (strlen(*s) / 5.0) / (*timeTaken / 60.0));
 }
 
-void gameDestroy(int* wordCount, char*** words) {
+void gameDestroy(int* wordCount, char*** words, char** playerWord) {
     for (int i = 0; i < *wordCount; i++) {
-        free(*words[i]);
+        free((*words)[i]);
     }
     free(*words);
+    *words = NULL;
+    *wordCount = 0;
+    free(*playerWord);
 }
 
 // Function to calculate elapsed time in seconds

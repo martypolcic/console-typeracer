@@ -20,10 +20,11 @@ char** readFileLines(const char* fileName, int* lineCount) {
         if (validateLine(line)) {
             lines = realloc(lines, sizeof(char*) * (*lineCount + 1));
             lines[*lineCount] = strdup(line);
+            free(line);
             (*lineCount)++;
         }
     }
-
+    
     free(line);
     fclose(file);
 
