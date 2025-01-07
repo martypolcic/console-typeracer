@@ -9,6 +9,7 @@
 #include "../sockets-lib/socket.h"
 #include "sourceValidator.h"
 #include "typeracerStructures.h"
+#include "jsonHandler.h"
 
 void serverInit(Game* game, const char* fileName);
 int startServer(const int port, const char* fileName, Game* game);

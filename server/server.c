@@ -28,7 +28,13 @@ void serverInit(Game* game, const char* fileName) {
 
     // Initialize the condition variable
     game->startCond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
+    game->finishCond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
     if (pthread_cond_init(game->startCond, NULL) != 0) {
+        perror("Failed to initialize condition variable");
+        pthread_mutex_destroy(game->mutex); // Clean up mutex if cond init fails
+        exit(EXIT_FAILURE);
+    }
+    if (pthread_cond_init(game->finishCond, NULL) != 0) {
         perror("Failed to initialize condition variable");
         pthread_mutex_destroy(game->mutex); // Clean up mutex if cond init fails
         exit(EXIT_FAILURE);
@@ -86,41 +92,46 @@ int startServer(const int port, const char* fileName, Game* game) {
             return -1;
         }
 
+        player->name = name;
+
         pthread_mutex_lock(game->mutex);
-        game->actualPlayerCount = actualPlayerCount;
-        game->players[game->actualPlayerCount] = player;
+        game->players[actualPlayerCount] = player;
 
         threadData[actualPlayerCount].game = game;
         threadData[actualPlayerCount].playerIndex = actualPlayerCount;
 
         pthread_create(&game->threads[actualPlayerCount], NULL, handleClient, &threadData[actualPlayerCount]);
-        pthread_mutex_unlock(game->mutex);
+        game->actualPlayerCount++;
         actualPlayerCount++;
-        sleep(1);
-
+        pthread_mutex_unlock(game->mutex);
     }
-    printf("All players connected\n");
+
+
     //call cond to start the game
-    pthread_mutex_lock(game->mutex);
-    
     //Read sentences from file 
     //TODO: optimize to load only one sentence
     int lineCount;
     char** sentences = readFileLines(fileName, &lineCount);
     int sentenceIndex = rand() % lineCount;
 
+    //sleep(5);
+    pthread_mutex_lock(game->mutex);
     game->socketsData->sentence = malloc(strlen(sentences[sentenceIndex]) * sizeof(char));
-    printf("sentence: %s\n", sentences[sentenceIndex]);
     strcpy(game->socketsData->sentence, sentences[sentenceIndex]);
     //rozdel sentence na slova a pridaj slova
     game->finishedPlayers = 0;
-    printf("Broadcast is going to send\n");
     pthread_cond_broadcast(game->startCond);
-    printf("Broadcast send\n");
+
+    printf("Cakam na finish\n");
+    while (game->finishedPlayers < game->maxPlayerCount) {
+        pthread_cond_wait(game->finishCond, game->mutex);
+    }
     pthread_mutex_unlock(game->mutex);
 
+    printf("Game finished\n");
     for (int i = 0; i < maxPlayers; i++) {
         pthread_mutex_lock(game->mutex);
+        printf("Joining thread %d\n", i);
         pthread_join(game->threads[i], NULL);
         pthread_mutex_unlock(game->mutex);
     }
@@ -143,14 +154,13 @@ void* handleClient(void* arg) {
 
     pthread_mutex_lock(game->mutex);
     SocketsData* data = game->socketsData;
+
     int clientSocket = game->players[playerIndex]->activeSocket;
+   
     while (game->actualPlayerCount < game->maxPlayerCount) {
-        printf("Waiting for players to connect...\n");
         pthread_cond_wait(game->startCond, game->mutex);
     }
-    printf("Player: %s\n", game->players[playerIndex]->name);
-
-    pthread_mutex_unlock(d->game->mutex);
+    pthread_mutex_unlock(game->mutex);
 
     // Send the sentence to the client
     data->sentence = "Ahoj ako sa mas?";
@@ -158,30 +168,29 @@ void* handleClient(void* arg) {
         perror("Failed to send sentence to client");
         return NULL;
     }
-
-    pthread_mutex_lock(d->game->mutex);
+    
+    pthread_mutex_lock(game->mutex);
+    
     // Game loop
     while (game->finishedPlayers < game->maxPlayerCount) {
         pthread_mutex_unlock(game->mutex);
 
-        char buffer[20] = "Ahoj ako sa mas?";
-        int bytes_received = recv(clientSocket, buffer, strlen(buffer), 0);
+        char buffer[20] = {0};
+        printf("Waiting for input from client %d\n", clientSocket);
+        int bytes_received = recv(clientSocket, buffer, 20, 0);
         if (bytes_received == 0) {
             printf("Client with socket %d disconnected.\n", clientSocket);
-            active_socket_destroy(clientSocket);
-            break;
+            pthread_mutex_lock(game->mutex);
+            active_socket_destroy(game->players[playerIndex]->activeSocket);
+            game->finishedPlayers++;
+            pthread_cond_signal(game->finishCond);
+            pthread_mutex_unlock(game->mutex);
+            printf("Idem do pice\n");
+            return NULL;
         } else {
             printf("Received: %s\n", buffer);
-            if (Refresh(game, &playerIndex) == -1) {
-                perror("Failed to refresh");
-                break;
-            }
-            // pthread_mutex_lock(game->mutex);
-            // game->players[playerIndex]->currentIndex += 1;//checkInput(buffer, game);
-            // if (game->players[playerIndex]->currentIndex == 5) {
-            //     game->players[playerIndex]->finished = 1;
-            // }
-            // if (game->players[playerIndex]->finished == 1) {
+            // if (Refresh(game, &playerIndex) == -1) {
+            //     perror("Failed to refresh");
             //     break;
             // }
         }

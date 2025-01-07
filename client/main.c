@@ -32,22 +32,26 @@ int main(int argc, char** argv) {
     printf("Connected to server on port %d.\n", port);
     if (argc < 2) {
         printf("Please provide your name as an argument.\n");
+        active_socket_destroy(activeSocket);
         return 1;
     }
-    sleep(2);
+    
+    //sleep(2);
     if (strlen(argv[1]) < 0 && strlen(argv[1]) > 19) {
         printf("Name must be between 1 and 19 characters.\n");
+        active_socket_destroy(activeSocket);
         return 1;
     }
     char* name = argv[1];
     printf("Sending name to server: %s\n", name);
     if (send(activeSocket, name, 19, 0) < 0) {
         printf("Failed to send name to server.\n");
+        active_socket_destroy(activeSocket);
         return 1;
     }
-    sleep(10);
-    char buffer[20] = {0};
-    int bytes_received = recv(activeSocket, buffer, strlen(buffer), 0);
+
+    char buffer[20];
+    int bytes_received = recv(activeSocket, buffer, 20, 0);
     printf("Received: %d\n", bytes_received);
     //printf("Received: %p\n", data);
     //printf("Received: %s\n", data->sentence);
@@ -62,5 +66,12 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 20; i++) {
         printf("%c \n", buffer[i]);
     }
+
     sleep(5);
+
+    char* odpoved = "Ahoj";
+    if (send(activeSocket, odpoved, strlen(odpoved), 0) < 0) {
+        printf("Failed to send name to server.\n");
+        return 1;
+    }
 }
