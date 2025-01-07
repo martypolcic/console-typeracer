@@ -4,6 +4,7 @@
 #include "game.h"
 #include "terminal.h"
 #include "sourceValidator.h"
+#include "inputHandler.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

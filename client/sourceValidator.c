@@ -38,3 +38,20 @@ int validateLine(const char* line) {
     }
     return 0;
 }
+
+char** parseSentence(const char* sentence, int* wordCount) {
+    char *sentenceCopy = strdup(sentence);
+    char *word = strtok(sentenceCopy, " ");
+    char **words = NULL;
+    *wordCount = 0;
+
+    while (word != NULL) {
+        words = realloc(words, sizeof(char*) * (*wordCount + 1));
+        words[*wordCount] = strdup(word);
+        (*wordCount)++;
+        word = strtok(NULL, " ");
+    }
+
+    free(sentenceCopy);
+    return words;
+}

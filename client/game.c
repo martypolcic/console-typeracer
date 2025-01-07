@@ -1,19 +1,29 @@
 #include "game.h"
 
-// Typing game function
-void startGame() {
-    // struct winsize ws;
-    // if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
-    //     perror("ioctl");
-    //     exit(EXIT_FAILURE);
-    // }
-    // int tWidth = ws.ws_col;
-    // printf("Terminal size: %d rows, %d columns\n", ws.ws_row, ws.ws_col);
+// Function to append a character to a string
+char* appendChar(char* str, char c) {
+    int len = strlen(str);
+    char *newStr = malloc(len + 2);
+    strcpy(newStr, str);
+    newStr[len] = c;
+    newStr[len + 1] = '\0';
+    return newStr;
+}
 
+//Function to delete a character from a string
+char* deleteChar(char* str) {
+    int len = strlen(str);
+    char *newStr = malloc(len);
+    strcpy(newStr, str);
+    newStr[len - 1] = '\0';
+    return newStr;
+}
+
+void startGame() {
     // Read sentences from file
     char* sentencesFile = "../input.txt";
-    int lineCount;
-    char** sentences = readFileLines(sentencesFile, &lineCount);
+    int sentenceCount;
+    char** sentences = readFileLines(sentencesFile, &sentenceCount);
     if (sentences == NULL) {
         printf("Failed to read file or file is empty.\n");
         return;
@@ -21,31 +31,19 @@ void startGame() {
 
     // Choose a random sentence
     srand(time(NULL));
-    int randomIndex = rand() % lineCount;
+    int randomIndex = rand() % sentenceCount;
     char *randomSentence = sentences[randomIndex];
-
-    char *sentence = strdup(randomSentence);
-    int sentenceLength = strlen(sentence);
-    int wordCount = 0;
-    int playerWordCount = 0;
-    bool wrong = false;
-
-    // Count words in the sentence
-    for (char *tmp = sentence; *tmp; tmp++) {
-        if (*tmp == ' ') wordCount++;
-    }
-    wordCount++; // For the last word
-
-    char **words = malloc(wordCount * sizeof(char *));
-    char **input = malloc(wordCount * sizeof(char *));
-    char *word = strtok(sentence, " ");
-    for (int i = 0; word != NULL; i++) {
-        words[i] = strdup(word);
-        input[i] = calloc(strlen(word) + 1, sizeof(char));
-        word = strtok(NULL, " ");
-    }
+    int sentenceLength = strlen(randomSentence);
+    // parse sentence into words
+    char** words = NULL;
+    int wordCount;
+    words = parseSentence(randomSentence, &wordCount);
 
     struct timeval startTime, endTime;
+    // variables
+    char* playerWord = "\0";
+    int charsDone = 0;
+    int currentWordIndex = 0;
 
     clearScreen();
     printf("Type the following sentence as fast as you can:\n");
@@ -57,70 +55,90 @@ void startGame() {
     disableBufferedInput();
     setCursorVisibility(false);
 
-    int running = 1;
-    int currentIndex = 0;
-    int inputIndex = 0;
-    int charsDone = 0;
-    int wrongIndex = 0;
-
-    clearScreen();
-    while (running) {
+    while (true) {
+        clearScreen();
         printf("Sentence: ");
-        for (int i = 0; i < wordCount; i++) {
-            if (i < currentIndex) {
-                printf("\033[32m%s\033[0m ", words[i]);
-            } else if (i == currentIndex) {
-                for (int j = 0; j < strlen(words[i]); j++) {
-                    if (input[i][j] == '\0') {
-                        printf("%c", words[i][j]);
-                    } else if (!wrong || j < wrongIndex) {
-                        printf("\033[32m%c\033[0m", words[i][j]);
-                    } else {
-                        printf("\033[31m%c\033[0m", words[i][j]);
-                    }
-                }
-                printf(" ");
+
+        int currentPrintWordIndex = currentWordIndex;
+        // print correct words in green
+        for (int i = 0; i < currentPrintWordIndex; i++) {
+            printf("\033[32m%s\033[0m ", words[i]);
+        }
+
+        int coloredChars = strlen(playerWord);
+        int typedChars = 0;
+        for (int i = 0; i < coloredChars; i++) {
+            if (playerWord[i] == words[currentPrintWordIndex][i]) {
+                printf("\033[32m%c\033[0m", playerWord[i]); // green
+                typedChars++;
             } else {
-                printf("%s ", words[i]);
+                break;
             }
         }
+
+        // print as many chars from original sentence red as there are coloredChars left, if any overflows, print chars from another word red
+        coloredChars = coloredChars - typedChars;
+        for (int i = 0; i < coloredChars; i++) {
+            if (typedChars >= strlen(words[currentPrintWordIndex])) {
+                typedChars = 0;
+                currentPrintWordIndex++;
+                //print space with red background
+                printf("\033[41m \033[0m");
+            } else {
+                printf("\033[31m%c\033[0m", words[currentPrintWordIndex][typedChars]); // red
+                typedChars++;
+            }
+        }
+
+        // print the rest of the words in white
+        for (int i = typedChars; i < strlen(words[currentPrintWordIndex]); i++) {
+            printf("\033[37m%c\033[0m", words[currentPrintWordIndex][i]); // white
+        }
+
+        // print the rest of the words in white
+        for (int i = currentPrintWordIndex + 1; i < wordCount; i++) {
+            printf(" %s", words[i]);
+        }
+
         printf("\n");
-        moveCursor(1, charsDone + currentIndex + 11);
+        printf("Your input: %s\n", playerWord);
+        printf("words: %d/%d\n", currentWordIndex, wordCount);
+        moveCursor(1, charsDone + currentWordIndex + 11 - 1); // 11 is the length of "Sentence: " string 
         setCursorVisibility(true);
 
-        if (currentIndex < wordCount) {
-            char c = getchar();
-            if (c != '\n') {
-                if (c == ' ' && !wrong) {
-                    currentIndex++;
-                    inputIndex = 0;
-                } else if (c == 127 || c == '\b') {
-                    if (inputIndex > 0) {
-                        input[currentIndex][--inputIndex] = '\0';
-                        if (inputIndex == wrongIndex) {
-                            wrongIndex = 0;
-                            wrong = false;
-                        }
-                        charsDone--;
-                    }
-                } else if (isalpha(c)) {
-                    if (inputIndex < strlen(words[currentIndex])) {
-                        input[currentIndex][inputIndex] = c;
-                        if (input[currentIndex][inputIndex] != words[currentIndex][inputIndex] && !wrong) {
-                            wrongIndex = inputIndex;
-                            wrong = true;
-                        }
-                        inputIndex++;
-                        charsDone++;
-                        if (!wrong && currentIndex == wordCount - 1 && inputIndex == strlen(words[currentIndex])) {
-                            currentIndex++;
-                        }
-                    }
+        if (currentWordIndex < wordCount) {
+            char playerInput = getchar();
+            
+            if (playerInput == 127 || playerInput == '\b') {
+                if (strlen(playerWord) <= 0) {
+                    continue;
+                }
+                
+                playerWord = deleteChar(playerWord);
+                charsDone--;
+                continue;
+            } 
+            if (!isCharacterKey(playerInput)) {
+                continue;
+            }
+
+            
+            if (playerInput == ' ' && strcmp(playerWord, words[currentWordIndex]) == 0) {
+                currentWordIndex++;
+                playerWord = "\0";
+            } else {
+                // append character to playerWord
+                if (currentPrintWordIndex == wordCount -1 && typedChars == strlen(words[currentPrintWordIndex])) {
+                    continue;
+                }
+                playerWord = appendChar(playerWord, playerInput);
+                charsDone++;
+                if (currentWordIndex == wordCount -1 && strcmp(playerWord, words[currentWordIndex]) == 0) {
+                    break;
                 }
             }
-            clearScreen();
         } else {
-            running = 0;
+            break;
         }
     }
 
@@ -130,7 +148,7 @@ void startGame() {
 
     double timeTaken = calculateElapsedTime(startTime, endTime);
     results(&randomSentence, &timeTaken);
-    gameDestroy(&wordCount, &words, &input, &sentence);
+    gameDestroy(&wordCount, &words);
 }
 
 void results(char** s, double* timeTaken) {
@@ -140,14 +158,11 @@ void results(char** s, double* timeTaken) {
     printf("Words per minute: %.2f\n", (strlen(*s) / 5.0) / (*timeTaken / 60.0));
 }
 
-void gameDestroy(int* wordCount, char*** words, char*** input, char** sentence) {
+void gameDestroy(int* wordCount, char*** words) {
     for (int i = 0; i < *wordCount; i++) {
         free(*words[i]);
-        free(*input[i]);
     }
     free(*words);
-    free(*input);
-    free(*sentence);
 }
 
 // Function to calculate elapsed time in seconds
