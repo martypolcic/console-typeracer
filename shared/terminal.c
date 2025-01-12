@@ -28,3 +28,8 @@ void setCursorVisibility(bool visible) {
 void clearScreen() {
     printf("\033[2J\033[H"); // Clear screen and move cursor to top-left corner
 }
+
+void clearSentence(int startRow) {
+    moveCursor(1 + startRow, 0);
+    printf("\033[K");
+}

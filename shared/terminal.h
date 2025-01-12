@@ -11,5 +11,6 @@ void restoreBufferedInput();
 void moveCursor(int x, int y);
 void setCursorVisibility(bool visible);
 void clearScreen();
+void clearSentence(int startRow);
 
 #endif
