@@ -23,7 +23,7 @@ void clear_buffer()
 int main(int argc, char **argv)
 {
     char *serverPath = "./build/server/server";
-    char *filePath = "test.txt";
+    char *filePath = "input.txt";
     signal(SIGINT, handle_sigint);
     disableBufferedInput();
     setCursorVisibility(false);
