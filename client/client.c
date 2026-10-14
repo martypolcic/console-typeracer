@@ -27,6 +27,25 @@ void gameLoop(Client *client)
 
         char playerInput = getchar();
 
+        if (playerInput == 27)
+        {
+            // Escape sequence (e.g. arrow keys) - consume trailing bytes
+            struct timeval tv = {0, 5000};
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            while (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0)
+            {
+                getchar();
+                FD_ZERO(&fds);
+                FD_SET(STDIN_FILENO, &fds);
+                tv.tv_sec = 0;
+                tv.tv_usec = 5000;
+            }
+            pthread_mutex_lock(&mutex);
+            continue;
+        }
+
         if (playerInput == 127 || playerInput == '\b')
         {
             if (strlen(client->playerWord) <= 0)
@@ -211,15 +230,31 @@ void showResults(Client *client, Times *timesTaken, char *sentence)
     printf("--------------------------------\n");
 
     int *sortedIndexes = malloc(client->playerCount * sizeof(int));
+    if (!sortedIndexes)
+    {
+        return;
+    }
     for (int i = 0; i < client->playerCount; i++)
     {
         sortedIndexes[i] = i;
     }
+    // Sort: positive finish times ascending; non-positive (DNF/disconnected) to the end
     for (int i = 0; i < client->playerCount; i++)
     {
         for (int j = i + 1; j < client->playerCount; j++)
         {
-            if (timesTaken->times[sortedIndexes[i]] > timesTaken->times[sortedIndexes[j]])
+            double timeA = timesTaken->times[sortedIndexes[i]];
+            double timeB = timesTaken->times[sortedIndexes[j]];
+            bool swap = false;
+            if (timeA <= 0 && timeB > 0)
+            {
+                swap = true;
+            }
+            else if (timeA > 0 && timeB > 0 && timeA > timeB)
+            {
+                swap = true;
+            }
+            if (swap)
             {
                 int temp = sortedIndexes[i];
                 sortedIndexes[i] = sortedIndexes[j];
@@ -229,30 +264,51 @@ void showResults(Client *client, Times *timesTaken, char *sentence)
     }
 
     printf("Leaderboard:\n");
+    int place = 1;
     for (int i = 0; i < client->playerCount; i++)
     {
-        switch (i + 1)
+        int idx = sortedIndexes[i];
+        if (timesTaken->times[idx] <= 0)
         {
-        case 1:
-            printf("1st place: ");
-            break;
-        case 2:
-            printf("2nd place: ");
-            break;
-        case 3:
-            printf("3rd place: ");
-            break;
-        default:
-            printf("%dth place: ", i + 1);
-            break;
+            printf("DNF: %s (Disconnected)\n", client->playerNames[idx]);
         }
-        printf("%s - %.2f seconds\n", client->playerNames[sortedIndexes[i]], timesTaken->times[sortedIndexes[i]]);
+        else
+        {
+            switch (place)
+            {
+            case 1:
+                printf("1st place: ");
+                break;
+            case 2:
+                printf("2nd place: ");
+                break;
+            case 3:
+                printf("3rd place: ");
+                break;
+            default:
+                printf("%dth place: ", place);
+                break;
+            }
+            printf("%s - %.2f seconds\n", client->playerNames[idx], timesTaken->times[idx]);
+            place++;
+        }
     }
     printf("--------------------------------\n");
 
     printf("Your statistics:\n");
-    printf("Time: %.2f seconds\n", timesTaken->times[client->playerIndex]);
-    printf("Words per minute: %.2f\n", (client->wordCount / calculateElapsedTime(client->startTime, client->endTime)) * 60);
+    if (timesTaken->times[client->playerIndex] > 0)
+    {
+        double elapsed = calculateElapsedTime(client->startTime, client->endTime);
+        printf("Time: %.2f seconds\n", timesTaken->times[client->playerIndex]);
+        if (elapsed > 0)
+        {
+            printf("Words per minute: %.2f\n", (client->wordCount / elapsed) * 60.0);
+        }
+    }
+    else
+    {
+        printf("Status: Did not finish (Disconnected)\n");
+    }
     printf("--------------------------------\n");
 
     free(sortedIndexes);
@@ -269,10 +325,19 @@ void *refreshScreen(void *arg)
     while (true)
     {
         int bufferSize = calculateRefreshingDataSize(client->playerCount, wordCount);
-        char buffer[bufferSize];
-        int bytes_received = recv(activeSocket, buffer, bufferSize, 0);
-        if (bytes_received == 0)
+        if (bufferSize <= 0)
         {
+            break;
+        }
+        char *buffer = malloc(bufferSize + 1);
+        if (!buffer)
+        {
+            break;
+        }
+        int bytes_received = recv(activeSocket, buffer, bufferSize, 0);
+        if (bytes_received <= 0)
+        {
+            free(buffer);
             clearScreen();
             printf("Server disconnected.\n");
             pthread_mutex_lock(d->mutex);
@@ -283,12 +348,21 @@ void *refreshScreen(void *arg)
             pthread_mutex_unlock(d->mutex);
             break;
         }
+        buffer[bytes_received] = '\0';
+
         pthread_mutex_lock(d->mutex);
         free(d->progress);
         d->progress = NULL;
         pthread_mutex_unlock(d->mutex);
 
         RefreshingData refreshingData = deserializeRefreshingData(buffer);
+        free(buffer);
+
+        if (refreshingData.progress == NULL)
+        {
+            break;
+        }
+
         int count = 0;
         for (int i = 0; i < client->playerCount; i++)
         {
@@ -306,14 +380,10 @@ void *refreshScreen(void *arg)
         pthread_mutex_lock(d->mutex);
         showProgress(refreshingData.progress, client->playerCount, wordCount, client->playerNames);
         pthread_mutex_unlock(d->mutex);
-        if (refreshingData.progress == NULL)
-        {
-            break;
-        }
+
         pthread_mutex_lock(d->mutex);
         d->progress = refreshingData.progress;
         pthread_mutex_unlock(d->mutex);
-        // showSentence(d->client);
     }
     pthread_mutex_lock(d->mutex);
     d->serverDisconnected = true;
@@ -327,7 +397,11 @@ char *appendChar(char *str, char c)
 {
     int len = strlen(str);
     char *newStr = malloc(len + 2);
-    strcpy(newStr, str);
+    if (!newStr)
+    {
+        return str;
+    }
+    memcpy(newStr, str, len);
     newStr[len] = c;
     newStr[len + 1] = '\0';
     free(str);
@@ -338,8 +412,16 @@ char *appendChar(char *str, char c)
 char *deleteChar(char *str)
 {
     int len = strlen(str);
+    if (len <= 0)
+    {
+        return str;
+    }
     char *newStr = malloc(len);
-    strcpy(newStr, str);
+    if (!newStr)
+    {
+        return str;
+    }
+    memcpy(newStr, str, len - 1);
     newStr[len - 1] = '\0';
     free(str);
     return newStr;

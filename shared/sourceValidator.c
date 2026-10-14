@@ -75,20 +75,50 @@ int validateLine(const char *line)
 
 char **parseSentence(const char *sentence, int *wordCount)
 {
-    char *sentenceCopy = strdup(sentence);
-    char *word = strtok(sentenceCopy, " ");
-    char **words = NULL;
     *wordCount = 0;
+    if (sentence == NULL)
+    {
+        return NULL;
+    }
+    char *sentenceCopy = strdup(sentence);
+    if (!sentenceCopy)
+    {
+        return NULL;
+    }
+    char *word = strtok(sentenceCopy, " \r\n\t");
+    char **words = NULL;
 
     while (word != NULL)
     {
-        words = realloc(words, sizeof(char *) * (*wordCount + 1));
+        char **temp = realloc(words, sizeof(char *) * (*wordCount + 1));
+        if (!temp)
+        {
+            for (int i = 0; i < *wordCount; i++)
+            {
+                free(words[i]);
+            }
+            free(words);
+            free(sentenceCopy);
+            *wordCount = 0;
+            return NULL;
+        }
+        words = temp;
         words[*wordCount] = strdup(word);
+        if (!words[*wordCount])
+        {
+            for (int i = 0; i < *wordCount; i++)
+            {
+                free(words[i]);
+            }
+            free(words);
+            free(sentenceCopy);
+            *wordCount = 0;
+            return NULL;
+        }
         (*wordCount)++;
-        word = strtok(NULL, " ");
+        word = strtok(NULL, " \r\n\t");
     }
 
     free(sentenceCopy);
-
     return words;
 }

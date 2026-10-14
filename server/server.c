@@ -52,21 +52,26 @@ int serverInit(Game *game, const char *fileName)
         return -1;
     }
 
-    int lineCount;
+    int lineCount = 0;
     char **sentences = readFileLines(fileName, &lineCount);
-    if (sentences == NULL)
+    if (sentences == NULL || lineCount <= 0)
     {
-        perror("Failed to read file lines");
+        perror("Failed to read file lines or file is empty");
         return -1;
     }
     int sentenceIndex = rand() % lineCount;
 
     sentences[sentenceIndex][strcspn(sentences[sentenceIndex], "\r\n")] = 0;
 
-    game->socketsData->sentence = malloc(strlen(sentences[sentenceIndex]) * sizeof(char));
+    game->socketsData->sentence = malloc((strlen(sentences[sentenceIndex]) + 1) * sizeof(char));
     if (game->socketsData->sentence == NULL)
     {
         perror("Failed to allocate memory for sentence");
+        for (int i = 0; i < lineCount; i++)
+        {
+            free(sentences[i]);
+        }
+        free(sentences);
         return -1;
     }
     strcpy(game->socketsData->sentence, sentences[sentenceIndex]);
@@ -116,7 +121,7 @@ int startServer(const int port, Game *game)
     while (actualPlayerCount < maxPlayers)
     {
         new_sockets[actualPlayerCount] = passive_socket_wait_for_client(serverSocket);
-        if (new_sockets[actualPlayerCount] < -1)
+        if (new_sockets[actualPlayerCount] < 0)
         {
             continue;
         }
@@ -130,25 +135,29 @@ int startServer(const int port, Game *game)
         }
 
         player->activeSocket = new_sockets[actualPlayerCount];
-        char *name = malloc(20);
+        char *name = calloc(21, sizeof(char));
         if (name == NULL)
         {
             perror("Failed to allocate memory for name");
             active_socket_destroy(new_sockets[actualPlayerCount]);
             player->activeSocket = -1;
+            free(player);
             return -1;
         }
 
         int bytes_received = recv(player->activeSocket, name, 20, 0);
-        if (bytes_received == 0)
+        if (bytes_received <= 0)
         {
             thread_printf("Client with socket %d didnt send name.\n", player->activeSocket);
             active_socket_destroy(player->activeSocket);
             player->activeSocket = -1;
-            return -1;
+            free(name);
+            free(player);
+            continue;
         }
 
-        name[strcspn(name, "\n")] = 0;
+        name[bytes_received] = '\0';
+        name[strcspn(name, "\r\n")] = 0;
         player->name = name;
         player->finished = false;
         player->disconnected = false;
@@ -178,10 +187,7 @@ int startServer(const int port, Game *game)
     while (game->finishedPlayers < game->maxPlayerCount)
     {
         pthread_cond_wait(&finishCond, &mutex);
-        game->finishedPlayers++;
-        pthread_mutex_unlock(&mutex);
-        thread_printf("Finished players: %d\n", game->finishedPlayers);
-        pthread_mutex_lock(&mutex);
+        thread_printf("Finished players: %d/%d\n", game->finishedPlayers, game->maxPlayerCount);
     }
 
     pthread_cond_broadcast(&getTimes);
@@ -228,7 +234,8 @@ int startServer(const int port, Game *game)
         {
             continue;
         }
-        if (game->players[i]->activeSocket == -1 || send(game->players[i]->activeSocket, timesBufferSizeBuffer, 10, 0) < 0)
+        int s1 = send(game->players[i]->activeSocket, timesBufferSizeBuffer, 10, 0);
+        if (game->players[i]->activeSocket == -1 || s1 < 0)
         {
             perror("Failed to send results length to client");
             free(timesBuffer);
@@ -237,7 +244,8 @@ int startServer(const int port, Game *game)
             return -1;
         }
 
-        if (game->players[i]->activeSocket == -1 || send(game->players[i]->activeSocket, timesBuffer, timesBufferSize, 0) < 0)
+        int s2 = send(game->players[i]->activeSocket, timesBuffer, timesBufferSize, 0);
+        if (game->players[i]->activeSocket == -1 || s2 < 0)
         {
             perror("Failed to send result to client");
             free(timesBuffer);
@@ -245,6 +253,7 @@ int startServer(const int port, Game *game)
             free(t.times);
             return -1;
         }
+        thread_printf("Sent to client %d: len_bytes=%d, body_bytes=%d, body='%s'\n", i, s1, s2, timesBuffer);
     }
     free(timesBuffer);
     free(timesBufferSizeBuffer);
@@ -259,6 +268,12 @@ int refresh(Game *game, pthread_mutex_t *mutex, RefreshingData *refreshingData, 
     pthread_mutex_lock(mutex);
     refreshingData->progress[*playerIndex]++;
     char *buffer = serializeRefreshingData(refreshingData, game->maxPlayerCount);
+    if (buffer == NULL)
+    {
+        pthread_mutex_unlock(mutex);
+        return -1;
+    }
+    int sendError = 0;
     for (int i = 0; i < game->maxPlayerCount; i++)
     {
         if (game->players[i]->disconnected)
@@ -269,12 +284,13 @@ int refresh(Game *game, pthread_mutex_t *mutex, RefreshingData *refreshingData, 
         if (send(game->players[i]->activeSocket, buffer, strlen(buffer), 0) < 0)
         {
             perror("Failed to send progress to client");
-            return -1;
+            game->players[i]->disconnected = true;
+            sendError = -1;
         }
     }
     free(buffer);
     pthread_mutex_unlock(mutex);
-    return 0;
+    return sendError;
 }
 
 void *handleClient(void *arg)
@@ -293,13 +309,15 @@ void *handleClient(void *arg)
 
     char *buffer = serializeSocketsData(game->socketsData, playerIndex);
     char buferLength[10];
-    sprintf(buferLength, "%d", strlen(buffer));
+    snprintf(buferLength, sizeof(buferLength), "%zu", strlen(buffer));
 
-    if (send(clientSocket, &buferLength, 10, 0) < 0)
+    if (send(clientSocket, buferLength, 10, 0) < 0)
     {
         perror("Failed to send json length to client");
         pthread_mutex_lock(d->mutex);
         game->players[playerIndex]->disconnected = true;
+        game->players[playerIndex]->finished = true;
+        game->finishedPlayers++;
         pthread_cond_signal(d->finishCond);
         pthread_mutex_unlock(d->mutex);
         free(buffer);
@@ -311,6 +329,8 @@ void *handleClient(void *arg)
         perror("Failed to send sentence to client");
         pthread_mutex_lock(d->mutex);
         game->players[playerIndex]->disconnected = true;
+        game->players[playerIndex]->finished = true;
+        game->finishedPlayers++;
         pthread_cond_signal(d->finishCond);
         pthread_mutex_unlock(d->mutex);
         free(buffer);
@@ -324,6 +344,8 @@ void *handleClient(void *arg)
     {
         perror("Failed to send progress to client");
         game->players[playerIndex]->disconnected = true;
+        game->players[playerIndex]->finished = true;
+        game->finishedPlayers++;
         pthread_cond_signal(d->finishCond);
         pthread_mutex_unlock(d->mutex);
         if (r != NULL)
@@ -335,16 +357,21 @@ void *handleClient(void *arg)
     free(r);
 
     // Game loop
-    while (game->players[playerIndex]->finished == false || game->players[playerIndex]->disconnected == false)
+    while (true)
     {
+        if (game->players[playerIndex]->finished || game->players[playerIndex]->disconnected)
+        {
+            break;
+        }
         pthread_mutex_unlock(d->mutex);
         char answer;
         int bytes_received = recv(clientSocket, &answer, 1, 0);
-        if (bytes_received == 0)
+        if (bytes_received <= 0)
         {
             pthread_mutex_lock(d->mutex);
             game->players[playerIndex]->disconnected = true;
             game->players[playerIndex]->finished = true;
+            game->finishedPlayers++;
             pthread_cond_signal(d->finishCond);
             break;
         }
@@ -355,8 +382,6 @@ void *handleClient(void *arg)
                 if (refresh(game, d->mutex, refreshingData, &playerIndex) == -1)
                 {
                     perror("Failed to refresh");
-                    pthread_mutex_lock(d->mutex);
-                    break;
                 }
             }
             else if (answer == '2')
@@ -364,32 +389,37 @@ void *handleClient(void *arg)
                 pthread_mutex_lock(d->mutex);
                 game->players[playerIndex]->finished = true;
                 game->players[playerIndex]->disconnected = false;
+                game->finishedPlayers++;
+                pthread_cond_signal(d->finishCond);
                 pthread_mutex_unlock(d->mutex);
-                if (refresh(game, d->mutex, refreshingData, &playerIndex) == -1)
-                {
-                    perror("Failed to refresh");
-                    break;
-                }
+                refresh(game, d->mutex, refreshingData, &playerIndex);
+                pthread_mutex_lock(d->mutex);
                 break;
             }
         }
         pthread_mutex_lock(d->mutex);
     }
-    pthread_cond_signal(d->finishCond);
-    pthread_cond_wait(d->timeCond, d->mutex);
-    pthread_mutex_unlock(d->mutex);
 
-    char timeTakenString[50];
-    int time_bytes = recv(clientSocket, timeTakenString, 50, 0);
-    if (time_bytes == 0)
+    if (!game->players[playerIndex]->disconnected)
     {
-        perror("Failed to receive time taken from client");
-        return NULL;
+        pthread_cond_wait(d->timeCond, d->mutex);
+        pthread_mutex_unlock(d->mutex);
+
+        char timeTakenString[51] = {0};
+        int time_bytes = recv(clientSocket, timeTakenString, 50, 0);
+        if (time_bytes > 0)
+        {
+            timeTakenString[time_bytes] = '\0';
+            double timeTaken = atof(timeTakenString);
+            pthread_mutex_lock(d->mutex);
+            game->players[playerIndex]->timeTaken = timeTaken;
+            pthread_mutex_unlock(d->mutex);
+        }
     }
-    double timeTaken = atof(timeTakenString);
-    pthread_mutex_lock(d->mutex);
-    game->players[playerIndex]->timeTaken = timeTaken;
-    pthread_mutex_unlock(d->mutex);
+    else
+    {
+        pthread_mutex_unlock(d->mutex);
+    }
 
     return NULL;
 }
@@ -408,6 +438,12 @@ void serverDestroy(Game *game)
                     if (game->players[i]->name != NULL)
                     {
                         free(game->players[i]->name);
+                    }
+                    if (game->players[i]->activeSocket != -1)
+                    {
+                        usleep(20000); // 20ms flush
+                        active_socket_destroy(game->players[i]->activeSocket);
+                        game->players[i]->activeSocket = -1;
                     }
                     free(game->players[i]);
                 }
@@ -455,9 +491,17 @@ void *startupServer(void *arg)
     srand(time(NULL));
     int port = 54897;
     // int port = 33827;
-    int maxPlayers = atoi(argv[1]);
-    char *fileName = argv[2];
-    int logging_temp = atoi(argv[3]);
+    int maxPlayers = (argv[1] != NULL) ? atoi(argv[1]) : 2;
+    if (maxPlayers < 1)
+    {
+        maxPlayers = 2;
+    }
+    char *fileName = (argv[2] != NULL) ? argv[2] : "input.txt";
+    int logging_temp = 0;
+    if (argv[3] != NULL)
+    {
+        logging_temp = atoi(argv[3]);
+    }
     if (logging_temp == 1)
     {
         logging = 1;
