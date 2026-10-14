@@ -117,32 +117,40 @@ void gameLoop(Client *client)
 
 void showProgress(int *progress, int playerCount, int wordCount, char **playerNames)
 {
-    // clearScreen();
-    moveCursor(0, 0);
+    printf("\033[s"); // Save typing cursor position
     setCursorVisibility(false);
+    moveCursor(0, 0);
+
     // get terminal size
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1)
     {
         perror("ioctl");
-        free(progress);
-        progress = NULL;
+        printf("\033[u");
+        setCursorVisibility(true);
+        fflush(stdout);
         return;
     }
     int terminalWidth = w.ws_col;
     for (int i = 0; i < playerCount; i++)
     {
-        printf("%s\n", playerNames[i]);
+        printf("\033[K%s\n", playerNames[i]);
         // print progress bar
         int progressWidth = (progress[i] * terminalWidth) / wordCount;
-        printf("\033[42m");
+        if (progressWidth > terminalWidth)
+        {
+            progressWidth = terminalWidth;
+        }
+        printf("\033[K\033[42m");
         for (int j = 0; j < progressWidth; j++)
         {
             printf(" ");
         }
-        printf("\033[0m");
-        printf("\n");
+        printf("\033[0m\n");
     }
+    printf("\033[u"); // Restore typing cursor position
+    setCursorVisibility(true);
+    fflush(stdout);
 }
 
 void showSentence(Client *client)
@@ -505,6 +513,8 @@ void gameDestroy(Client *client, SocketsData *socketsData, Times *times)
     }
     restoreBufferedInput();
     setCursorVisibility(true);
+    printf("\033[?1049l");
+    fflush(stdout);
 }
 
 int getRemainingChars(char **words, int currentWordIndex, int wordCount)

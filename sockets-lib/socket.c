@@ -88,3 +88,29 @@ int connect_to_server(const char * name, const int port) {
 void active_socket_destroy(int socket) {
   close(socket);
 }
+
+int send_all(int socket, const void *buffer, size_t length) {
+  const char *ptr = (const char *)buffer;
+  size_t totalSent = 0;
+  while (totalSent < length) {
+    ssize_t sent = send(socket, ptr + totalSent, length - totalSent, 0);
+    if (sent <= 0) {
+      return -1;
+    }
+    totalSent += sent;
+  }
+  return 0;
+}
+
+int recv_all(int socket, void *buffer, size_t length) {
+  char *ptr = (char *)buffer;
+  size_t totalReceived = 0;
+  while (totalReceived < length) {
+    ssize_t received = recv(socket, ptr + totalReceived, length - totalReceived, 0);
+    if (received <= 0) {
+      return -1;
+    }
+    totalReceived += received;
+  }
+  return 0;
+}

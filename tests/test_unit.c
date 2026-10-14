@@ -190,6 +190,46 @@ void test_json_handler(void)
     TEST_ASSERT(tBad.times == NULL, "deserializeTimes(missing times) safe");
 }
 
+#include "eventQueue.h"
+
+void test_event_queue(void)
+{
+    printf("\n--- Testing MPSC Event Queue ---\n");
+    EventQueue q;
+    event_queue_init(&q);
+
+    // 1. Pop from empty queue with timeout=0
+    GameEvent ev;
+    TEST_ASSERT(event_queue_pop(&q, &ev, 0) == false, "Empty queue pop (timeout=0) returns false");
+
+    // 2. FIFO order verification
+    GameEvent e1 = {EVENT_WORD_COMPLETED, 0, {100, 0}};
+    GameEvent e2 = {EVENT_SENTENCE_FINISHED, 1, {100, 500}};
+    event_queue_push(&q, e1);
+    event_queue_push(&q, e2);
+
+    GameEvent out1, out2;
+    TEST_ASSERT(event_queue_pop(&q, &out1, 100) == true, "Pop 1st event succeeded");
+    TEST_ASSERT(out1.type == EVENT_WORD_COMPLETED && out1.playerIndex == 0, "1st event matches e1");
+
+    TEST_ASSERT(event_queue_pop(&q, &out2, 100) == true, "Pop 2nd event succeeded");
+    TEST_ASSERT(out2.type == EVENT_SENTENCE_FINISHED && out2.playerIndex == 1, "2nd event matches e2");
+
+    // 3. Timed wait on empty queue
+    TEST_ASSERT(event_queue_pop(&q, &ev, 20) == false, "Timed pop on empty queue expired cleanly");
+
+    // 4. Close queue unblocks pop
+    event_queue_close(&q);
+    TEST_ASSERT(event_queue_pop(&q, &ev, 50) == false, "Pop on closed queue returns false immediately");
+
+    // 5. Push to closed queue is safely discarded
+    event_queue_push(&q, e1);
+    TEST_ASSERT(event_queue_pop(&q, &ev, 0) == false, "Push on closed queue was discarded");
+
+    event_queue_destroy(&q);
+    TEST_ASSERT(1, "Queue destroyed cleanly");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -199,6 +239,7 @@ int main(void)
     test_input_handler();
     test_source_validator();
     test_json_handler();
+    test_event_queue();
 
     printf("\n=========================================\n");
     printf("Tests run: %d, Failed: %d\n", tests_run, tests_failed);

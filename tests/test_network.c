@@ -32,12 +32,15 @@ typedef struct SimulatedClientArgs {
     int wordsToComplete;
     double reportedTime;
     bool finishedSuccessfully;
+    double serverRecordedTime;
+    bool disconnectMidRace;
 } SimulatedClientArgs;
 
 void *simulated_client_thread(void *arg)
 {
     SimulatedClientArgs *cargs = (SimulatedClientArgs *)arg;
     cargs->finishedSuccessfully = false;
+    cargs->serverRecordedTime = -999.0;
 
     // Retry connect up to 20 times (1 second total) while server is binding
     int sock = -1;
@@ -59,7 +62,7 @@ void *simulated_client_thread(void *arg)
     // Send name
     char nameBuf[20] = {0};
     strncpy(nameBuf, cargs->name, sizeof(nameBuf) - 1);
-    if (send(sock, nameBuf, 20, 0) < 0)
+    if (send_all(sock, nameBuf, 20) < 0)
     {
         close(sock);
         return NULL;
@@ -67,7 +70,7 @@ void *simulated_client_thread(void *arg)
 
     // Receive SocketsData length
     char lenBuf[11] = {0};
-    if (recv(sock, lenBuf, 10, 0) <= 0)
+    if (recv_all(sock, lenBuf, 10) < 0)
     {
         close(sock);
         return NULL;
@@ -81,7 +84,7 @@ void *simulated_client_thread(void *arg)
 
     // Receive SocketsData JSON
     char *dataJson = calloc(dataLen + 1, 1);
-    if (recv(sock, dataJson, dataLen, 0) <= 0)
+    if (recv_all(sock, dataJson, dataLen) < 0)
     {
         free(dataJson);
         close(sock);
@@ -94,22 +97,38 @@ void *simulated_client_thread(void *arg)
     char rBuf[256] = {0};
     recv(sock, rBuf, sizeof(rBuf) - 1, 0);
 
+    if (cargs->disconnectMidRace)
+    {
+        // Simulate typing 1 word, then abrupt disconnect
+        char wordDone = '3';
+        send_all(sock, &wordDone, 1);
+        usleep(20000); // 20ms
+        close(sock);
+        if (sData.sentence) free(sData.sentence);
+        if (sData.names)
+        {
+            for (int i = 0; i < sData.playerCount; i++) free(sData.names[i]);
+            free(sData.names);
+        }
+        return NULL;
+    }
+
     // Simulate typing words: send '3'
     for (int i = 0; i < cargs->wordsToComplete; i++)
     {
         char wordDone = '3';
-        send(sock, &wordDone, 1, 0);
+        send_all(sock, &wordDone, 1);
         usleep(10000); // 10ms simulate typing delay
     }
 
     // Finish sentence: send '2'
     char finishByte = '2';
-    send(sock, &finishByte, 1, 0);
+    send_all(sock, &finishByte, 1);
 
-    // Send reported time
+    // Send reported time (legacy/anti-cheat check)
     char timeStr[50] = {0};
     snprintf(timeStr, sizeof(timeStr), "%.2f", cargs->reportedTime);
-    send(sock, timeStr, sizeof(timeStr), 0);
+    send_all(sock, timeStr, sizeof(timeStr));
 
     // Read until results with "times" arrive
     char streamBuf[2048] = {0};
@@ -135,6 +154,10 @@ void *simulated_client_thread(void *arg)
                 if (times.times != NULL)
                 {
                     cargs->finishedSuccessfully = true;
+                    if (sData.playerIndex >= 0 && sData.playerIndex < sData.playerCount)
+                    {
+                        cargs->serverRecordedTime = times.times[sData.playerIndex];
+                    }
                     free(times.times);
                     break;
                 }
@@ -191,8 +214,8 @@ void test_full_two_player_race(void)
     TEST_ASSERT(ret == 0, "Server thread spawned successfully");
 
     // Launch 2 simulated client threads
-    SimulatedClientArgs client1 = {"Racer1", 54897, 3, 10.50, false};
-    SimulatedClientArgs client2 = {"Racer2", 54897, 3, 12.80, false};
+    SimulatedClientArgs client1 = {"Racer1", 54897, 3, 10.50, false, 0.0, false};
+    SimulatedClientArgs client2 = {"Racer2", 54897, 3, 12.80, false, 0.0, false};
 
     pthread_t c1Thread, c2Thread;
     pthread_create(&c1Thread, NULL, simulated_client_thread, &client1);
@@ -203,10 +226,48 @@ void test_full_two_player_race(void)
 
     TEST_ASSERT(client1.finishedSuccessfully == true, "Client 1 completed race & received results");
     TEST_ASSERT(client2.finishedSuccessfully == true, "Client 2 completed race & received results");
+    TEST_ASSERT(client1.serverRecordedTime > 0.0 && client1.serverRecordedTime < 5.0,
+                "Client 1 received server-authoritative monotonic timestamp");
 
     // Wait for server thread to cleanly terminate
     pthread_join(serverThread, NULL);
     TEST_ASSERT(1, "Server thread cleanly joined without deadlocking");
+}
+
+void test_authoritative_timing_and_disconnect(void)
+{
+    printf("\n--- Testing Authoritative Timing Anti-Cheat & Mid-Race Disconnect ---\n");
+    signal(SIGPIPE, SIG_IGN);
+    usleep(100000); // 100ms pause between runs
+
+    char *serverArgs[5];
+    serverArgs[0] = "server";
+    serverArgs[1] = "2";
+    serverArgs[2] = INPUT_TXT_PATH;
+    serverArgs[3] = "1";
+    serverArgs[4] = NULL;
+
+    pthread_t serverThread;
+    int ret = pthread_create(&serverThread, NULL, startupServer, serverArgs);
+    TEST_ASSERT(ret == 0, "Server spawned for anti-cheat and disconnect test");
+
+    // Racer1 reports fake 999.99s, Racer2 disconnects abruptly mid-race
+    SimulatedClientArgs client1 = {"HonestFinisher", 54897, 3, 999.99, false, 0.0, false};
+    SimulatedClientArgs client2 = {"AbruptQuitter", 54897, 1, 0.0, false, 0.0, true};
+
+    pthread_t c1Thread, c2Thread;
+    pthread_create(&c1Thread, NULL, simulated_client_thread, &client1);
+    pthread_create(&c2Thread, NULL, simulated_client_thread, &client2);
+
+    pthread_join(c1Thread, NULL);
+    pthread_join(c2Thread, NULL);
+
+    TEST_ASSERT(client1.finishedSuccessfully == true, "Finishing client received race results");
+    TEST_ASSERT(client1.serverRecordedTime > 0.0 && client1.serverRecordedTime < 5.0,
+                "Server ignored fake 999.99s client time and calculated authoritative monotonic time");
+
+    pthread_join(serverThread, NULL);
+    TEST_ASSERT(1, "Server cleanly terminated despite abrupt client disconnect");
 }
 
 int main(void)
@@ -217,6 +278,7 @@ int main(void)
 
     test_socket_lifecycle();
     test_full_two_player_race();
+    test_authoritative_timing_and_disconnect();
 
     printf("\n=========================================\n");
     printf("Tests run: %d, Failed: %d\n", tests_run, tests_failed);
