@@ -4,7 +4,8 @@
 char* appendChar(char* str, char c) {
     int len = strlen(str);
     char *newStr = malloc(len + 2);
-    strcpy(newStr, str);
+    if (!newStr) return str;
+    memcpy(newStr, str, len);
     newStr[len] = c;
     newStr[len + 1] = '\0';
     free(str);
@@ -14,8 +15,10 @@ char* appendChar(char* str, char c) {
 //Function to delete a character from a string
 char* deleteChar(char* str) {
     int len = strlen(str);
+    if (len <= 0) return str;
     char *newStr = malloc(len);
-    strcpy(newStr, str);
+    if (!newStr) return str;
+    memcpy(newStr, str, len - 1);
     newStr[len - 1] = '\0';
     free(str);
     return newStr;
