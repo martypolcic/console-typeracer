@@ -11,6 +11,7 @@
 #include "sourceValidator.h"
 #include "typeracerStructures.h"
 #include "jsonHandler.h"
+#include "eventQueue.h"
 
 extern int logging;
 
@@ -19,7 +20,7 @@ int serverInit(Game *game, const char *fileName);
 int startServer(const int port, Game *game);
 void *clientWaiter(void *arg);
 void *handleClient(void *arg);
-void broadcastProgress(Game *game);
+void broadcastProgress(Game *game, RefreshingData *refreshingData);
 void serverDestroy(Game *game);
 int refresh(Game *game, pthread_mutex_t *mutex, RefreshingData *refreshingData, int *playerIndex);
 void *startupServer(void *arg);

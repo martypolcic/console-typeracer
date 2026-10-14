@@ -55,6 +55,7 @@ typedef struct ThreadData
     pthread_cond_t *finishCond;
     pthread_cond_t *timeCond;
     int playerIndex;
+    void *eventQueue;
 } ThreadData;
 
 typedef struct Client

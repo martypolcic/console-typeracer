@@ -3,11 +3,11 @@
 // Signal handler for SIGINT (Ctrl+C)
 void handle_sigint(int sig)
 {
-    printf("\nCaught signal %d (Ctrl+C). Cleaning up...\n", sig);
-
-    clearScreen();
+    printf("\033[?1049l");
+    fflush(stdout);
     restoreBufferedInput();
     setCursorVisibility(true);
+    printf("\nCaught signal %d (Ctrl+C). Cleaning up...\n", sig);
     printf("Exiting program safely.\n");
 
     exit(0); // Exit the program
@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     }
     name[strcspn(name, "\r\n")] = 0;
 
-    if (send(activeSocket, name, 20, 0) < 0)
+    if (send_all(activeSocket, name, 20) < 0)
     {
         printf("Failed to send name to server.\n");
         active_socket_destroy(activeSocket);
@@ -115,8 +115,7 @@ int main(int argc, char **argv)
     printf("------------------------------------------------\n");
 
     char jsonSocketDataLength[11] = {0};
-    int bytes_received = recv(activeSocket, jsonSocketDataLength, 10, 0);
-    if (bytes_received <= 0)
+    if (recv_all(activeSocket, jsonSocketDataLength, 10) < 0)
     {
         printf("Json data length went wrong.\n");
         active_socket_destroy(activeSocket);
@@ -126,7 +125,7 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    jsonSocketDataLength[bytes_received] = '\0';
+    jsonSocketDataLength[10] = '\0';
 
     int socketDataLength = atoi(jsonSocketDataLength);
     if (socketDataLength <= 0)
@@ -149,8 +148,7 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    bytes_received = recv(activeSocket, jsonSocketData, socketDataLength, 0);
-    if (bytes_received <= 0)
+    if (recv_all(activeSocket, jsonSocketData, socketDataLength) < 0)
     {
         printf("Getting JSON error\n");
         free(jsonSocketData);
@@ -161,7 +159,7 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    jsonSocketData[bytes_received] = '\0';
+    jsonSocketData[socketDataLength] = '\0';
 
     SocketsData socketsData;
     socketsData = deserializeSocketsData(jsonSocketData);
@@ -178,6 +176,34 @@ int main(int argc, char **argv)
     client->playerWord[0] = '\0';
     client->words = parseSentence(socketsData.sentence, &client->wordCount);
 
+    // Switch to alternate screen buffer for clean terminal session
+    printf("\033[?1049h");
+    fflush(stdout);
+
+    // Synchronized 3-2-1 visual countdown before racing begins
+    for (int count = 3; count > 0; count--)
+    {
+        clearScreen();
+        printf("\n\n");
+        printf("\t+===========================================+\n");
+        printf("\t|                                           |\n");
+        printf("\t|          RACE STARTING IN %d...            |\n", count);
+        printf("\t|                                           |\n");
+        printf("\t+===========================================+\n");
+        fflush(stdout);
+        sleep(1);
+    }
+    clearScreen();
+    printf("\n\n");
+    printf("\t+===========================================+\n");
+    printf("\t|                                           |\n");
+    printf("\t|                  GO!                      |\n");
+    printf("\t|                                           |\n");
+    printf("\t+===========================================+\n");
+    fflush(stdout);
+    usleep(300000);
+    clearScreen();
+
     gettimeofday(&client->startTime, NULL);
     gameLoop(client);
     double timeTaken = calculateElapsedTime(client->startTime, client->endTime);
@@ -185,9 +211,10 @@ int main(int argc, char **argv)
     char timeTakenString[50] = {0};
     snprintf(timeTakenString, sizeof(timeTakenString), "%.2f", timeTaken);
 
-    if (send(activeSocket, timeTakenString, sizeof(timeTakenString), 0) < 0)
+    // Send completion time to server (for backward compatibility, though server is authoritative)
+    if (send_all(activeSocket, timeTakenString, sizeof(timeTakenString)) < 0)
     {
-        printf("Failed to send time taken to server. 1\n");
+        printf("Failed to send time taken to server.\n");
         gameDestroy(client, &socketsData, NULL);
         free(args[1]);
         free(args[3]);
@@ -197,10 +224,9 @@ int main(int argc, char **argv)
     }
 
     char timeResultLength[11] = {0};
-    bytes_received = recv(activeSocket, timeResultLength, 10, 0);
-    if (bytes_received <= 0)
+    if (recv_all(activeSocket, timeResultLength, 10) < 0)
     {
-        printf("Failed to receive results from server. 2\n");
+        printf("Failed to receive results length from server.\n");
         gameDestroy(client, &socketsData, NULL);
         free(args[1]);
         free(args[3]);
@@ -208,12 +234,12 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    timeResultLength[bytes_received] = '\0';
+    timeResultLength[10] = '\0';
 
     int jsonResultsLength = atoi(timeResultLength);
     if (jsonResultsLength <= 0)
     {
-        printf("Failed to receive results length from server.\n");
+        printf("Failed to receive results length from server: invalid length.\n");
         gameDestroy(client, &socketsData, NULL);
         free(args[1]);
         free(args[3]);
@@ -231,10 +257,9 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    bytes_received = recv(activeSocket, jsonResults, jsonResultsLength, 0);
-    if (bytes_received <= 0)
+    if (recv_all(activeSocket, jsonResults, jsonResultsLength) < 0)
     {
-        printf("Failed to receive results from server. 3\n");
+        printf("Failed to receive results from server.\n");
         free(jsonResults);
         gameDestroy(client, &socketsData, NULL);
         free(args[1]);
@@ -243,12 +268,15 @@ int main(int argc, char **argv)
         if (serverThread) free(serverThread);
         return 1;
     }
-    jsonResults[bytes_received] = '\0';
+    jsonResults[jsonResultsLength] = '\0';
 
     Times times = deserializeTimes(jsonResults);
     free(jsonResults);
 
     showResults(client, &times, socketsData.sentence);
+    printf("\nPress Enter to exit...\n");
+    getchar();
+
     gameDestroy(client, &socketsData, &times);
     if (mode == 1 && serverThread)
     {
