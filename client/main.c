@@ -305,9 +305,38 @@ int main(int argc, char **argv)
     // Switch to alternate screen buffer for clean terminal session
     printf("\033[?1049h");
     fflush(stdout);
+
+    // Synchronized 3-2-1 visual countdown before racing begins
+    for (int count = 3; count > 0; count--)
+    {
+        clearScreen();
+        printf("\n\n");
+        printf("\t+===========================================+\n");
+        printf("\t|                                           |\n");
+        printf("\t|          RACE STARTING IN %d...            |\n", count);
+        printf("\t|                                           |\n");
+        printf("\t+===========================================+\n\n");
+        if (socketsData.sentence)
+        {
+            printf("\tText preview:\n\t\"%s\"\n", socketsData.sentence);
+        }
+        fflush(stdout);
+        sleep(1);
+    }
     clearScreen();
+    printf("\n\n");
+    printf("\t+===========================================+\n");
+    printf("\t|                                           |\n");
+    printf("\t|                  GO!                      |\n");
+    printf("\t|                                           |\n");
+    printf("\t+===========================================+\n");
+    fflush(stdout);
+    usleep(300000);
+    clearScreen();
+
     disableBufferedInput();
     setCursorVisibility(false);
+    tcflush(STDIN_FILENO, TCIFLUSH);
 
     gameLoop(client);
 
