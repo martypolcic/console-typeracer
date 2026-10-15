@@ -90,9 +90,9 @@ int main(int argc, char **argv)
             playerCount = 2;
         }
         clear_buffer();
-        if (playerCount < 2)
+        if (playerCount < 1)
         {
-            printf("Please provide a number greater than 1.\n");
+            printf("Please provide a number of at least 1.\n");
             return 1;
         }
 
@@ -176,14 +176,6 @@ int main(int argc, char **argv)
         }
     }
 
-    int activeSocket = connect_to_server(host, port);
-    if (activeSocket < 0)
-    {
-        printf("Failed to connect to server (%s:%d).\n", host, port);
-        return 1;
-    }
-
-    clearScreen();
     char name[21] = {0};
     if (playerName[0] != '\0')
     {
@@ -195,7 +187,6 @@ int main(int argc, char **argv)
         if (fgets(name, 20, stdin) == NULL || strlen(name) == 0 || name[0] == '\n')
         {
             printf("Please provide a valid name.\n");
-            active_socket_destroy(activeSocket);
             return 1;
         }
         if (strchr(name, '\n') == NULL)
@@ -203,6 +194,13 @@ int main(int argc, char **argv)
             clear_buffer();
         }
         name[strcspn(name, "\r\n")] = 0;
+    }
+
+    int activeSocket = connect_to_server(host, port);
+    if (activeSocket < 0)
+    {
+        printf("Failed to connect to server (%s:%d).\n", host, port);
+        return 1;
     }
 
     char handshake[128] = {0};
@@ -307,9 +305,38 @@ int main(int argc, char **argv)
     // Switch to alternate screen buffer for clean terminal session
     printf("\033[?1049h");
     fflush(stdout);
+
+    // Synchronized 3-2-1 visual countdown before racing begins
+    for (int count = 3; count > 0; count--)
+    {
+        clearScreen();
+        printf("\n\n");
+        printf("\t+===========================================+\n");
+        printf("\t|                                           |\n");
+        printf("\t|          RACE STARTING IN %d...            |\n", count);
+        printf("\t|                                           |\n");
+        printf("\t+===========================================+\n\n");
+        if (socketsData.sentence)
+        {
+            printf("\tText preview:\n\t\"%s\"\n", socketsData.sentence);
+        }
+        fflush(stdout);
+        sleep(1);
+    }
     clearScreen();
+    printf("\n\n");
+    printf("\t+===========================================+\n");
+    printf("\t|                                           |\n");
+    printf("\t|                  GO!                      |\n");
+    printf("\t|                                           |\n");
+    printf("\t+===========================================+\n");
+    fflush(stdout);
+    usleep(300000);
+    clearScreen();
+
     disableBufferedInput();
     setCursorVisibility(false);
+    tcflush(STDIN_FILENO, TCIFLUSH);
 
     gameLoop(client);
 
