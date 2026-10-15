@@ -1,0 +1,14 @@
+{
+  "name": "typeracer-gateway",
+  "version": "1.0.0",
+  "description": "REST API and WebSocket gateway for TypeRacer C engine",
+  "main": "gateway.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node gateway.js",
+    "test": "node test_gateway.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

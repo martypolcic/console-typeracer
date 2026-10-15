@@ -14,9 +14,6 @@ RefreshingData deserializeRefreshingData(const char *jsonString);
 char *serializeSocketsData(const SocketsData *data, const int playerIndex);
 SocketsData deserializeSocketsData(const char *jsonString);
 
-// Function prototypes for calculating the size of the RefreshingData
-int calculateRefreshingDataSize(int playerCount, int wordCount);
-
 // Function protorypes for Time struct
 char *serializeTimes(const Times *data, int playerCount);
 Times deserializeTimes(const char *jsonString);

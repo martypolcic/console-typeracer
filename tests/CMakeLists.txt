@@ -1,5 +1,4 @@
 add_executable(test_unit test_unit.c 
-    ${CMAKE_SOURCE_DIR}/shared/inputHandler.c 
     ${CMAKE_SOURCE_DIR}/shared/sourceValidator.c 
     ${CMAKE_SOURCE_DIR}/shared/jsonHandler.c
     ${CMAKE_SOURCE_DIR}/server/eventQueue.c
@@ -20,3 +19,9 @@ target_compile_definitions(test_network PRIVATE INPUT_TXT_PATH="${CMAKE_SOURCE_D
 
 add_test(NAME UnitTests COMMAND test_unit)
 add_test(NAME NetworkTests COMMAND test_network)
+
+find_program(NODE_EXECUTABLE node)
+if (NODE_EXECUTABLE)
+    add_test(NAME GatewayTests COMMAND ${NODE_EXECUTABLE} ${CMAKE_SOURCE_DIR}/gateway/test_gateway.js)
+    set_tests_properties(GatewayTests PROPERTIES ENVIRONMENT "SERVER_BIN=$<TARGET_FILE:server>")
+endif()

@@ -1,0 +1,15 @@
+services:
+  typeracer-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: martypolcic/console-typeracer:latest
+    container_name: typeracer-engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "54897:54897"
+    environment:
+      - PORT=8080
+      - TCP_PORT=54897
+      - DEFAULT_MAX_PLAYERS=2

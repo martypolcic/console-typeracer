@@ -4,28 +4,73 @@ void gameLoop(Client *client)
 {
     clearScreen();
     data *d = malloc(sizeof(data));
+    if (d == NULL)
+    {
+        return;
+    }
     d->progress = malloc(client->playerCount * sizeof(int));
+    if (d->progress == NULL)
+    {
+        free(d);
+        return;
+    }
+    for (int i = 0; i < client->playerCount; i++) d->progress[i] = 0;
     d->client = client;
     d->serverDisconnected = false;
 
     // Initialize the mutex
     pthread_t refreshScreenThread;
     pthread_mutex_t mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t startCond = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
-    pthread_cond_t finishCond = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
 
     d->mutex = &mutex;
-    d->wait = &startCond;
-    d->refresh = &finishCond;
 
     pthread_create(&refreshScreenThread, NULL, refreshScreen, d);
-    pthread_mutex_lock(&mutex);
-    while (d->serverDisconnected == false)
+
+    bool localFinished = false;
+
+    while (true)
     {
+        pthread_mutex_lock(&mutex);
+        if (d->serverDisconnected || client->hasFinalTimes)
+        {
+            pthread_mutex_unlock(&mutex);
+            break;
+        }
+
+        if (localFinished)
+        {
+            pthread_mutex_unlock(&mutex);
+            usleep(50000); // 50ms pause while waiting for others to finish
+            continue;
+        }
+
         showSentence(client);
         pthread_mutex_unlock(&mutex);
 
-        char playerInput = getchar();
+        // Wait for keyboard input with a 50ms timeout to avoid hanging on getchar()
+        // when race completes or server disconnects
+        fd_set inputFds;
+        FD_ZERO(&inputFds);
+        FD_SET(STDIN_FILENO, &inputFds);
+        struct timeval inputTv = {0, 50000}; // 50ms
+        int sel = select(STDIN_FILENO + 1, &inputFds, NULL, NULL, &inputTv);
+        if (sel <= 0)
+        {
+            continue;
+        }
+
+        int playerInput = getchar();
+        if (playerInput == EOF || feof(stdin))
+        {
+            break;
+        }
+
+        pthread_mutex_lock(&mutex);
+        if (d->serverDisconnected || client->hasFinalTimes)
+        {
+            pthread_mutex_unlock(&mutex);
+            break;
+        }
 
         if (playerInput == 27)
         {
@@ -42,33 +87,35 @@ void gameLoop(Client *client)
                 tv.tv_sec = 0;
                 tv.tv_usec = 5000;
             }
-            pthread_mutex_lock(&mutex);
+            pthread_mutex_unlock(&mutex);
             continue;
         }
 
         if (playerInput == 127 || playerInput == '\b')
         {
-            if (strlen(client->playerWord) <= 0)
+            if (strlen(client->playerWord) > 0)
             {
-                pthread_mutex_lock(&mutex);
-                continue;
+                client->charsDone--;
+                client->playerWord = deleteChar(client->playerWord);
             }
-            client->charsDone--;
-            client->playerWord = deleteChar(client->playerWord);
-            pthread_mutex_lock(&mutex);
+            pthread_mutex_unlock(&mutex);
             continue;
         }
-        if (!isCharacterKey(playerInput))
+        if (!isprint((unsigned char)playerInput))
         {
-            pthread_mutex_lock(&mutex);
+            pthread_mutex_unlock(&mutex);
+            continue;
+        }
+
+        if (client->words == NULL || client->currentWordIndex >= client->wordCount)
+        {
+            pthread_mutex_unlock(&mutex);
             continue;
         }
 
         if (playerInput == ' ' && strcmp(client->playerWord, client->words[client->currentWordIndex]) == 0)
         {
             client->currentWordIndex++;
-            free(client->playerWord);
-            client->playerWord = malloc(1);
             client->playerWord[0] = '\0';
             client->charsDone++;
 
@@ -80,31 +127,40 @@ void gameLoop(Client *client)
         }
         else
         {
-            // playerWord is already the lenght to the end of the sentence, do not append
-            if (strlen(client->playerWord) >= getRemainingChars(client->words, client->currentWordIndex, client->wordCount))
+            // playerWord is already the length to the end of the sentence, do not append
+            if (strlen(client->playerWord) >= (size_t)getRemainingChars(client->words, client->currentWordIndex, client->wordCount))
             {
-                pthread_mutex_lock(&mutex);
+                pthread_mutex_unlock(&mutex);
                 continue;
             }
 
-            client->charsDone++;
-            client->playerWord = appendChar(client->playerWord, playerInput);
+            size_t prevWordLen = strlen(client->playerWord);
+            client->playerWord = appendChar(client->playerWord, (char)playerInput);
+            if (strlen(client->playerWord) > prevWordLen)
+            {
+                client->charsDone++;
+            }
             if (client->currentWordIndex == client->wordCount - 1 && strcmp(client->playerWord, client->words[client->currentWordIndex]) == 0)
             {
                 char sentenceFinish = '2';
                 if (send(client->activeSocket, &sentenceFinish, 1, 0) < 0)
                 {
-                    printf("Failed to send word count.\n");
+                    printf("Failed to send finish event.\n");
                 }
-                gettimeofday(&client->endTime, NULL);
-                pthread_mutex_lock(&mutex);
-                break;
+
+                localFinished = true;
+                clearScreen();
+                printf("\n\n\tWaiting for race to finish...\n\n");
+                fflush(stdout);
             }
         }
-        pthread_mutex_lock(&mutex);
+        pthread_mutex_unlock(&mutex);
     }
-    pthread_mutex_unlock(&mutex);
     clearScreen();
+    if (client->activeSocket >= 0)
+    {
+        shutdown(client->activeSocket, SHUT_RDWR);
+    }
     pthread_join(refreshScreenThread, NULL);
     if (d->progress != NULL)
     {
@@ -119,24 +175,18 @@ void showProgress(int *progress, int playerCount, int wordCount, char **playerNa
 {
     printf("\033[s"); // Save typing cursor position
     setCursorVisibility(false);
-    moveCursor(0, 0);
+    moveCursor(1, 1);
 
     // get terminal size
     struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1)
-    {
-        perror("ioctl");
-        printf("\033[u");
-        setCursorVisibility(true);
-        fflush(stdout);
-        return;
-    }
-    int terminalWidth = w.ws_col;
+    int terminalWidth = (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1 || w.ws_col <= 0) ? 80 : w.ws_col;
+
     for (int i = 0; i < playerCount; i++)
     {
-        printf("\033[K%s\n", playerNames[i]);
-        // print progress bar
-        int progressWidth = (progress[i] * terminalWidth) / wordCount;
+        const char *name = (playerNames && playerNames[i]) ? playerNames[i] : "Player";
+        printf("\033[K%s\n", name);
+        // print progress bar with division by zero guard
+        int progressWidth = (wordCount > 0) ? ((progress[i] * terminalWidth) / wordCount) : 0;
         if (progressWidth > terminalWidth)
         {
             progressWidth = terminalWidth;
@@ -158,60 +208,63 @@ void showSentence(Client *client)
     int cursorRow = 0;
     int cursorCol = 0;
     struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1)
-    {
-        perror("ioctl");
-        return;
-    }
-    int terminalWidth = w.ws_col;
-    cursorRow = (((client->charsDone + 8) / (terminalWidth)) + (client->playerCount * 2)) + 1;
-    cursorCol = ((client->charsDone + 8) % terminalWidth);
-    moveCursor(1 + (client->playerCount * 2), 0);
+    int terminalWidth = (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1 || w.ws_col <= 0) ? 80 : w.ws_col;
+    moveCursor(1 + (client->playerCount * 2), 1);
     printf("Sentence: ");
     int currentPrintWordIndex = client->currentWordIndex;
     // print correct words in green
-    for (int i = 0; i < currentPrintWordIndex; i++)
+    for (int i = 0; i < currentPrintWordIndex && i < client->wordCount; i++)
     {
         printf("\033[32m%s\033[0m ", client->words[i]);
     }
 
     int coloredChars = strlen(client->playerWord);
     int typedChars = 0;
-    for (int i = 0; i < coloredChars; i++)
+    if (currentPrintWordIndex < client->wordCount)
     {
-        if (client->playerWord[i] == client->words[currentPrintWordIndex][i])
+        for (int i = 0; i < coloredChars; i++)
         {
-            printf("\033[32m%c\033[0m", client->playerWord[i]); // green
-            typedChars++;
+            if (client->playerWord[i] == client->words[currentPrintWordIndex][i])
+            {
+                printf("\033[32m%c\033[0m", client->playerWord[i]); // green
+                typedChars++;
+            }
+            else
+            {
+                break;
+            }
         }
-        else
-        {
-            break;
-        }
-    }
 
-    // print as many chars from original sentence red as there are coloredChars left, if any overflows, print chars from another word red
-    coloredChars = coloredChars - typedChars;
-    for (int i = 0; i < coloredChars; i++)
-    {
-        if (typedChars >= strlen(client->words[currentPrintWordIndex]))
+        // print as many chars from original sentence red as there are coloredChars left
+        coloredChars = coloredChars - typedChars;
+        for (int i = 0; i < coloredChars; i++)
         {
-            typedChars = 0;
-            currentPrintWordIndex++;
-            // print space with red background
-            printf("\033[41m \033[0m");
+            if (typedChars >= (int)strlen(client->words[currentPrintWordIndex]))
+            {
+                if (currentPrintWordIndex < client->wordCount - 1)
+                {
+                    typedChars = 0;
+                    currentPrintWordIndex++;
+                    // print space with red background
+                    printf("\033[41m \033[0m");
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                printf("\033[31m%c\033[0m", client->words[currentPrintWordIndex][typedChars]); // red
+                typedChars++;
+            }
         }
-        else
-        {
-            printf("\033[31m%c\033[0m", client->words[currentPrintWordIndex][typedChars]); // red
-            typedChars++;
-        }
-    }
 
-    // print the rest of the words in white
-    for (int i = typedChars; i < strlen(client->words[currentPrintWordIndex]); i++)
-    {
-        printf("\033[37m%c\033[0m", client->words[currentPrintWordIndex][i]); // white
+        // print the rest of the current word in white
+        for (int i = typedChars; i < (int)strlen(client->words[currentPrintWordIndex]); i++)
+        {
+            printf("\033[37m%c\033[0m", client->words[currentPrintWordIndex][i]); // white
+        }
     }
 
     // print the rest of the words in white
@@ -225,7 +278,7 @@ void showSentence(Client *client)
     printf("Your input: %s\n", client->playerWord);
     printf("words: %d/%d\n", client->currentWordIndex, client->wordCount);
     cursorRow = (((client->charsDone + 9) / (terminalWidth)) + (client->playerCount * 2)) + 1;
-    cursorCol = ((client->charsDone + 9) % terminalWidth);
+    cursorCol = ((client->charsDone + 9) % terminalWidth) + 1;
     moveCursor(cursorRow, cursorCol);
     setCursorVisibility(true);
 }
@@ -234,8 +287,14 @@ void showResults(Client *client, Times *timesTaken, char *sentence)
 {
     clearScreen();
     printf("--------------------------------\n");
-    printf("%s\n", sentence);
+    if (sentence) printf("%s\n", sentence);
     printf("--------------------------------\n");
+
+    if (timesTaken == NULL || timesTaken->times == NULL)
+    {
+        printf("Results unavailable from server.\n");
+        return;
+    }
 
     int *sortedIndexes = malloc(client->playerCount * sizeof(int));
     if (!sortedIndexes)
@@ -276,9 +335,10 @@ void showResults(Client *client, Times *timesTaken, char *sentence)
     for (int i = 0; i < client->playerCount; i++)
     {
         int idx = sortedIndexes[i];
+        const char *pName = (client->playerNames && client->playerNames[idx]) ? client->playerNames[idx] : "Player";
         if (timesTaken->times[idx] <= 0)
         {
-            printf("DNF: %s (Disconnected)\n", client->playerNames[idx]);
+            printf("DNF: %s (Disconnected)\n", pName);
         }
         else
         {
@@ -297,21 +357,18 @@ void showResults(Client *client, Times *timesTaken, char *sentence)
                 printf("%dth place: ", place);
                 break;
             }
-            printf("%s - %.2f seconds\n", client->playerNames[idx], timesTaken->times[idx]);
+            printf("%s - %.2f seconds\n", pName, timesTaken->times[idx]);
             place++;
         }
     }
     printf("--------------------------------\n");
 
     printf("Your statistics:\n");
-    if (timesTaken->times[client->playerIndex] > 0)
+    double authoritativeTime = timesTaken->times[client->playerIndex];
+    if (authoritativeTime > 0.0)
     {
-        double elapsed = calculateElapsedTime(client->startTime, client->endTime);
-        printf("Time: %.2f seconds\n", timesTaken->times[client->playerIndex]);
-        if (elapsed > 0)
-        {
-            printf("Words per minute: %.2f\n", (client->wordCount / elapsed) * 60.0);
-        }
+        printf("Time: %.2f seconds\n", authoritativeTime);
+        printf("Words per minute: %.2f\n", (client->wordCount / authoritativeTime) * 60.0);
     }
     else
     {
@@ -329,70 +386,134 @@ void *refreshScreen(void *arg)
     Client *client = d->client;
     int wordCount = client->wordCount;
     int activeSocket = client->activeSocket;
+    char accum[4096] = {0};
+    int accumLen = 0;
 
     while (true)
     {
-        int bufferSize = calculateRefreshingDataSize(client->playerCount, wordCount);
-        if (bufferSize <= 0)
-        {
-            break;
-        }
-        char *buffer = malloc(bufferSize + 1);
-        if (!buffer)
-        {
-            break;
-        }
-        int bytes_received = recv(activeSocket, buffer, bufferSize, 0);
+        char temp[256];
+        int bytes_received = recv(activeSocket, temp, sizeof(temp) - 1, 0);
         if (bytes_received <= 0)
         {
-            free(buffer);
-            clearScreen();
-            printf("Server disconnected.\n");
             pthread_mutex_lock(d->mutex);
-            active_socket_destroy(client->activeSocket);
-            client->activeSocket = -1;
-            free(d->progress);
-            d->progress = NULL;
+            if (!client->hasFinalTimes)
+            {
+                clearScreen();
+                printf("Server disconnected.\n");
+            }
+            if (client->activeSocket >= 0)
+            {
+                active_socket_destroy(client->activeSocket);
+                client->activeSocket = -1;
+            }
+            d->serverDisconnected = true;
             pthread_mutex_unlock(d->mutex);
             break;
         }
-        buffer[bytes_received] = '\0';
+        temp[bytes_received] = '\0';
 
-        pthread_mutex_lock(d->mutex);
-        free(d->progress);
-        d->progress = NULL;
-        pthread_mutex_unlock(d->mutex);
-
-        RefreshingData refreshingData = deserializeRefreshingData(buffer);
-        free(buffer);
-
-        if (refreshingData.progress == NULL)
+        if (accumLen + bytes_received < (int)sizeof(accum) - 1)
         {
-            break;
+            memcpy(accum + accumLen, temp, bytes_received);
+            accumLen += bytes_received;
+            accum[accumLen] = '\0';
         }
-
-        int count = 0;
-        for (int i = 0; i < client->playerCount; i++)
+        else
         {
-            if (refreshingData.progress[i] == wordCount)
+            char *lastBrace = strrchr(accum, '{');
+            if (lastBrace && lastBrace > accum)
             {
-                count++;
+                int rem = strlen(lastBrace);
+                memmove(accum, lastBrace, rem + 1);
+                accumLen = rem;
+            }
+            else
+            {
+                accumLen = 0;
+                accum[0] = '\0';
+            }
+            if (accumLen + bytes_received < (int)sizeof(accum) - 1)
+            {
+                memcpy(accum + accumLen, temp, bytes_received);
+                accumLen += bytes_received;
+                accum[accumLen] = '\0';
             }
         }
-        if (count == client->playerCount)
-        {
-            free(refreshingData.progress);
-            refreshingData.progress = NULL;
-            break;
-        }
-        pthread_mutex_lock(d->mutex);
-        showProgress(refreshingData.progress, client->playerCount, wordCount, client->playerNames);
-        pthread_mutex_unlock(d->mutex);
 
-        pthread_mutex_lock(d->mutex);
-        d->progress = refreshingData.progress;
-        pthread_mutex_unlock(d->mutex);
+        while (true)
+        {
+            char *start = strchr(accum, '{');
+            if (!start)
+            {
+                accumLen = 0;
+                accum[0] = '\0';
+                break;
+            }
+
+            int depth = 0;
+            char *end = NULL;
+            for (char *p = start; *p; p++)
+            {
+                if (*p == '{') depth++;
+                else if (*p == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        end = p;
+                        break;
+                    }
+                }
+            }
+
+            if (!end)
+            {
+                if (start > accum)
+                {
+                    memmove(accum, start, strlen(start) + 1);
+                    accumLen = strlen(accum);
+                }
+                break;
+            }
+
+            char saved = *(end + 1);
+            *(end + 1) = '\0';
+
+            // Check if this JSON object contains the final race results {"times": [...]}
+            if (strstr(start, "\"times\"") != NULL)
+            {
+                Times times = deserializeTimes(start);
+                *(end + 1) = saved;
+                pthread_mutex_lock(d->mutex);
+                client->finalTimes = times;
+                client->hasFinalTimes = true;
+                d->serverDisconnected = true;
+                pthread_mutex_unlock(d->mutex);
+                goto all_done;
+            }
+
+            RefreshingData refreshingData = deserializeRefreshingData(start);
+            *(end + 1) = saved;
+
+            char *rest = end + 1;
+            int restLen = strlen(rest);
+            memmove(accum, rest, restLen + 1);
+            accumLen = restLen;
+
+            if (refreshingData.progress == NULL)
+            {
+                continue;
+            }
+
+            pthread_mutex_lock(d->mutex);
+            free(d->progress);
+            d->progress = refreshingData.progress;
+            showProgress(d->progress, client->playerCount, wordCount, client->playerNames);
+            pthread_mutex_unlock(d->mutex);
+        }
     }
+
+all_done:
     pthread_mutex_lock(d->mutex);
     d->serverDisconnected = true;
     pthread_mutex_unlock(d->mutex);
@@ -400,39 +521,34 @@ void *refreshScreen(void *arg)
     return NULL;
 }
 
+
 // Function to append a character to a string
 char *appendChar(char *str, char c)
 {
-    int len = strlen(str);
-    char *newStr = malloc(len + 2);
-    if (!newStr)
+    if (str != NULL)
     {
-        return str;
+        int len = strlen(str);
+        if (len < 255)
+        {
+            str[len] = c;
+            str[len + 1] = '\0';
+        }
     }
-    memcpy(newStr, str, len);
-    newStr[len] = c;
-    newStr[len + 1] = '\0';
-    free(str);
-    return newStr;
+    return str;
 }
 
 // Function to delete a character from a string
 char *deleteChar(char *str)
 {
-    int len = strlen(str);
-    if (len <= 0)
+    if (str != NULL)
     {
-        return str;
+        int len = strlen(str);
+        if (len > 0)
+        {
+            str[len - 1] = '\0';
+        }
     }
-    char *newStr = malloc(len);
-    if (!newStr)
-    {
-        return str;
-    }
-    memcpy(newStr, str, len - 1);
-    newStr[len - 1] = '\0';
-    free(str);
-    return newStr;
+    return str;
 }
 
 void gameDestroy(Client *client, SocketsData *socketsData, Times *times)
@@ -472,19 +588,6 @@ void gameDestroy(Client *client, SocketsData *socketsData, Times *times)
     }
     if (client != NULL)
     {
-        if (client->playerNames != NULL)
-        {
-            for (int i = 0; i < client->playerCount; i++)
-            {
-                if (client->playerNames[i] != NULL)
-                {
-                    free(client->playerNames[i]);
-                    client->playerNames[i] = NULL;
-                }
-            }
-            free(client->playerNames);
-            client->playerNames = NULL;
-        }
         if (client->words != NULL)
         {
             for (int i = 0; i < client->wordCount; i++)
@@ -541,8 +644,6 @@ int menu()
     }
     int terminalWidth = w.ws_col;
     int terminalHeight = w.ws_row - 1;
-    int cursorRow = terminalHeight / 2;
-    int cursorCol = terminalWidth / 2;
 
     char *menuItems[] = {"Create lobby", "Join lobby", "Exit"};
     int menuItemsCount = sizeof(menuItems) / sizeof(menuItems[0]);
@@ -574,96 +675,135 @@ int menu()
         {
             if (i == 0 || i == terminalHeight - 1)
             {
-                for (int j = 0; j < terminalWidth; j++)
+                putchar('+');
+                for (int j = 1; j < terminalWidth - 1; j++)
                 {
-                    if (j == 0 || j == terminalWidth - 1)
-                    {
-                        printf("+");
-                    }
-                    else
-                    {
-                        printf("-");
-                    }
+                    putchar('-');
+                }
+                if (terminalWidth > 1)
+                {
+                    putchar('+');
                 }
             }
             else if (i == terminalHeight - 2)
             {
-                for (int j = 0; j < terminalWidth; j++)
+                putchar('|');
+                int cpStart = (int)floor((terminalWidth / 2.0) - (strlen(copyRight) / 2.0));
+                for (int j = 1; j < terminalWidth - 1; j++)
                 {
-                    if (j == 0 || j == terminalWidth - 1)
+                    if (j == cpStart)
                     {
-                        printf("|");
+                        fputs(copyRight, stdout);
+                        j += (int)strlen(copyRight) - 1;
                     }
                     else
                     {
-                        if (j == floor((terminalWidth / 2) - (strlen(copyRight) / 2)))
-                        {
-                            printf("%s ", copyRight);
-                            j += strlen(copyRight) - 1;
-                        }
-                        else
-                        {
-                            printf(" ");
-                        }
+                        putchar(' ');
                     }
+                }
+                if (terminalWidth > 1)
+                {
+                    putchar('|');
                 }
             }
             else
             {
-                for (int j = 0; j < terminalWidth; j++)
+                putchar('|');
+                int bannerStart = (int)floor(((terminalWidth - 47) / 2.0));
+                int menuStart = (int)floor((terminalWidth / 2.0) - 10);
+                for (int j = 1; j < terminalWidth - 1; j++)
                 {
-                    if (j == 0 || j == terminalWidth - 1)
+                    if (i >= (terminalHeight / 5) && j == bannerStart && menuTextCount < menuTextCountMax)
                     {
-                        printf("|");
+                        fputs(menuText[menuTextCount], stdout);
+                        menuTextCount++;
+                        j += 46;
                     }
-                    else
+                    else if (i >= (terminalHeight / 5) * 3 && j == menuStart && menuItemTextCount < menuItemsCount)
                     {
-                        if ((i >= (terminalHeight / 5) && j == floor(((terminalWidth - 47) / 2))) && menuTextCount < menuTextCountMax)
+                        if (selectedMenuItem == menuItemTextCount)
                         {
-                            printf("%s", menuText[menuTextCount]);
-                            menuTextCount++;
-                            j += 46;
-                            continue;
-                        }
-                        else if (i >= (terminalHeight / 5) * 3 && j == floor((terminalWidth / 2) - 10) && menuItemTextCount < menuItemsCount)
-                        {
-                            if (selectedMenuItem == menuItemTextCount)
-                            {
-                                printf("\e[1m>\e[0m %s ", menuItems[menuItemTextCount]);
-                            }
-                            else
-                            {
-                                printf("   %s", menuItems[menuItemTextCount]);
-                            }
-                            j += strlen(menuItems[menuItemTextCount]) + 2;
-                            menuItemTextCount++;
+                            printf("\e[1m>\e[0m %s ", menuItems[menuItemTextCount]);
                         }
                         else
                         {
-                            printf(" ");
+                            printf("   %s", menuItems[menuItemTextCount]);
                         }
+                        j += (int)strlen(menuItems[menuItemTextCount]) + 2;
+                        menuItemTextCount++;
                     }
+                    else
+                    {
+                        putchar(' ');
+                    }
+                }
+                if (terminalWidth > 1)
+                {
+                    putchar('|');
                 }
             }
             printf("\n");
         }
 
-        char input = getchar();
-        if (input == 's')
+        printf("\n   [W/S or Up/Down] Move    [Enter] Select\n");
+
+        int input = getchar();
+        if (input == EOF || feof(stdin))
+        {
+            return 0;
+        }
+        if (input == 27)
+        {
+            // Check if trailing escape sequence bytes are available (e.g. arrow keys)
+            struct timeval tv = {0, 50000};
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0)
+            {
+                int c1 = getchar();
+                if (c1 == '[')
+                {
+                    tv.tv_sec = 0;
+                    tv.tv_usec = 50000;
+                    FD_ZERO(&fds);
+                    FD_SET(STDIN_FILENO, &fds);
+                    if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0)
+                    {
+                        int c2 = getchar();
+                        if (c2 == 'A') // Up
+                        {
+                            if (selectedMenuItem > 0)
+                            {
+                                selectedMenuItem--;
+                            }
+                        }
+                        else if (c2 == 'B') // Down
+                        {
+                            if (selectedMenuItem < menuItemsCount - 1)
+                            {
+                                selectedMenuItem++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (input == 's' || input == 'S')
         {
             if (selectedMenuItem < menuItemsCount - 1)
             {
                 selectedMenuItem++;
             }
         }
-        else if (input == 'w')
+        else if (input == 'w' || input == 'W')
         {
             if (selectedMenuItem > 0)
             {
                 selectedMenuItem--;
             }
         }
-        else if (input == '\n')
+        else if (input == '\n' || input == '\r')
         {
             if (selectedMenuItem == 0)
             {
@@ -681,8 +821,4 @@ int menu()
     }
 }
 
-// Function to calculate elapsed time in seconds
-double calculateElapsedTime(struct timeval start, struct timeval end)
-{
-    return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-}
+

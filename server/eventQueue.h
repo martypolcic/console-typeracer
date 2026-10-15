@@ -23,12 +23,15 @@ typedef struct EventNode {
     struct EventNode *next;
 } EventNode;
 
+#define MAX_EVENT_QUEUE_CAPACITY 4096
+
 typedef struct EventQueue {
     EventNode *head;
     EventNode *tail;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
     bool closed;
+    int count;
 } EventQueue;
 
 void event_queue_init(EventQueue *q);

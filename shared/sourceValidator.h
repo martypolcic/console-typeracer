@@ -9,5 +9,6 @@
 char **readFileLines(const char *fileName, int *lineCount);
 int validateLine(const char *line);
 char **parseSentence(const char *sentence, int *wordCount);
+int countWords(const char *sentence);
 
 #endif // SOURCEVALIDATOR_H

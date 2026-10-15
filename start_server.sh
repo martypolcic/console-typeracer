@@ -1,3 +1,3 @@
 #!/bin/bash
 
-./build/server/server 3 input.txt
+./build/server/server --daemon 54897 input.txt 2

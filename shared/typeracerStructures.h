@@ -19,11 +19,13 @@ typedef struct Player
 typedef struct Times
 {
     double *times;
+    int count;
 } Times;
 
 typedef struct RefreshingData
 {
     int *progress;
+    int count;
 } RefreshingData;
 
 typedef struct SocketsData
@@ -44,6 +46,8 @@ typedef struct Game
     int finishedPlayers;
     SocketsData *socketsData;
     RefreshingData *refreshingData;
+    char roomCode[16];
+    bool gameStarted;
 } Game;
 
 typedef struct ThreadData
@@ -52,10 +56,9 @@ typedef struct ThreadData
     RefreshingData *refreshingData;
     pthread_mutex_t *mutex;
     pthread_cond_t *startCond;
-    pthread_cond_t *finishCond;
-    pthread_cond_t *timeCond;
     int playerIndex;
     void *eventQueue;
+    pthread_mutex_t *roomMutex;
 } ThreadData;
 
 typedef struct Client
@@ -63,13 +66,14 @@ typedef struct Client
     int activeSocket;
     int playerIndex;
     int currentWordIndex;
-    struct timeval startTime, endTime;
     char *playerWord;
     char **words;
     int charsDone;
     int wordCount;
     char **playerNames;
     int playerCount;
+    Times finalTimes;
+    bool hasFinalTimes;
 } Client;
 
 typedef struct data
@@ -77,8 +81,6 @@ typedef struct data
     int *progress;
     Client *client;
     pthread_mutex_t *mutex;
-    pthread_cond_t *wait;
-    pthread_cond_t *refresh;
     bool serverDisconnected;
 } data;
 

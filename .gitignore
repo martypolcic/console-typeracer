@@ -4,3 +4,5 @@ build/
 *.dylib
 *.so
 *.a
+node_modules/
+gateway/node_modules/
