@@ -995,7 +995,7 @@ static void *coordinator_connection_worker(void *arg)
     int defaultMaxPlayers = conn->defaultMaxPlayers;
     const char *actualFileName = conn->fileName;
 
-    struct timeval rcvTimeout = {2, 0}; // 2-second timeout to prevent indefinite hangs during handshake
+    struct timeval rcvTimeout = {5, 0}; // 5-second timeout to prevent indefinite hangs during handshake
     setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &rcvTimeout, sizeof(rcvTimeout));
 
     char buffer[128] = {0};
