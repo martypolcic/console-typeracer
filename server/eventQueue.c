@@ -9,25 +9,27 @@ void event_queue_init(EventQueue *q)
     pthread_mutex_init(&q->mutex, NULL);
     pthread_cond_init(&q->cond, NULL);
     q->closed = false;
+    q->count = 0;
 }
 
 void event_queue_push(EventQueue *q, GameEvent ev)
 {
+    pthread_mutex_lock(&q->mutex);
+    if (q->closed || q->count >= MAX_EVENT_QUEUE_CAPACITY)
+    {
+        pthread_mutex_unlock(&q->mutex);
+        return;
+    }
+
     EventNode *node = malloc(sizeof(EventNode));
     if (!node)
     {
+        pthread_mutex_unlock(&q->mutex);
         return;
     }
     node->event = ev;
     node->next = NULL;
 
-    pthread_mutex_lock(&q->mutex);
-    if (q->closed)
-    {
-        free(node);
-        pthread_mutex_unlock(&q->mutex);
-        return;
-    }
     if (q->tail)
     {
         q->tail->next = node;
@@ -38,6 +40,7 @@ void event_queue_push(EventQueue *q, GameEvent ev)
         q->head = node;
         q->tail = node;
     }
+    q->count++;
     pthread_cond_signal(&q->cond);
     pthread_mutex_unlock(&q->mutex);
 }
@@ -88,6 +91,7 @@ bool event_queue_pop(EventQueue *q, GameEvent *ev, int timeout_ms)
     {
         q->tail = NULL;
     }
+    q->count--;
     free(node);
     pthread_mutex_unlock(&q->mutex);
     return true;
@@ -114,6 +118,7 @@ void event_queue_destroy(EventQueue *q)
     }
     q->head = NULL;
     q->tail = NULL;
+    q->count = 0;
     pthread_mutex_unlock(&q->mutex);
 
     pthread_mutex_destroy(&q->mutex);

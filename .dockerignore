@@ -1,0 +1,6 @@
+build/
+.git/
+.gitignore
+gateway/node_modules/
+.gemini/
+*.log

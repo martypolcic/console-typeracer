@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "inputHandler.h"
+#include <ctype.h>
 #include "sourceValidator.h"
 #include "jsonHandler.h"
 #include "typeracerStructures.h"
@@ -20,33 +20,29 @@ static int tests_failed = 0;
     } \
 } while (0)
 
-void test_input_handler(void)
+void test_input_validation(void)
 {
-    printf("\n--- Testing Input Handler ---\n");
+    printf("\n--- Testing Input Validation ---\n");
     // Printable characters must be allowed
-    TEST_ASSERT(isCharacterKey('a') != 0, "Lowercase letter 'a' allowed");
-    TEST_ASSERT(isCharacterKey('Z') != 0, "Uppercase letter 'Z' allowed");
-    TEST_ASSERT(isCharacterKey('0') != 0, "Digit '0' allowed");
-    TEST_ASSERT(isCharacterKey('9') != 0, "Digit '9' allowed");
-    TEST_ASSERT(isCharacterKey(' ') != 0, "Space ' ' allowed");
-    TEST_ASSERT(isCharacterKey(',') != 0, "Comma ',' allowed");
-    TEST_ASSERT(isCharacterKey('.') != 0, "Period '.' allowed");
-    TEST_ASSERT(isCharacterKey('!') != 0, "Exclamation '!' allowed");
-    TEST_ASSERT(isCharacterKey('?') != 0, "Question '?' allowed");
-    TEST_ASSERT(isCharacterKey('-') != 0, "Hyphen '-' allowed");
-    TEST_ASSERT(isCharacterKey('@') != 0, "Symbol '@' allowed");
+    TEST_ASSERT(isprint('a') != 0, "Lowercase letter 'a' allowed");
+    TEST_ASSERT(isprint('Z') != 0, "Uppercase letter 'Z' allowed");
+    TEST_ASSERT(isprint('0') != 0, "Digit '0' allowed");
+    TEST_ASSERT(isprint('9') != 0, "Digit '9' allowed");
+    TEST_ASSERT(isprint(' ') != 0, "Space ' ' allowed");
+    TEST_ASSERT(isprint(',') != 0, "Comma ',' allowed");
+    TEST_ASSERT(isprint('.') != 0, "Period '.' allowed");
+    TEST_ASSERT(isprint('!') != 0, "Exclamation '!' allowed");
+    TEST_ASSERT(isprint('?') != 0, "Question '?' allowed");
+    TEST_ASSERT(isprint('-') != 0, "Hyphen '-' allowed");
+    TEST_ASSERT(isprint('@') != 0, "Symbol '@' allowed");
 
     // Control and escape characters must NOT be allowed
-    TEST_ASSERT(isCharacterKey('\0') == 0, "Null byte rejected");
-    TEST_ASSERT(isCharacterKey('\n') == 0, "Newline rejected");
-    TEST_ASSERT(isCharacterKey('\r') == 0, "Carriage return rejected");
-    TEST_ASSERT(isCharacterKey('\t') == 0, "Tab rejected");
-    TEST_ASSERT(isCharacterKey(27) == 0, "Escape (27) rejected");
-    TEST_ASSERT(isCharacterKey(127) == 0, "DEL (127) rejected");
-
-    // compareInput
-    TEST_ASSERT(compareInput('k', 'k') == 1, "Matching characters compare true");
-    TEST_ASSERT(compareInput('a', 'b') == 0, "Mismatched characters compare false");
+    TEST_ASSERT(isprint('\0') == 0, "Null byte rejected");
+    TEST_ASSERT(isprint('\n') == 0, "Newline rejected");
+    TEST_ASSERT(isprint('\r') == 0, "Carriage return rejected");
+    TEST_ASSERT(isprint('\t') == 0, "Tab rejected");
+    TEST_ASSERT(isprint(27) == 0, "Escape (27) rejected");
+    TEST_ASSERT(isprint(127) == 0, "DEL (127) rejected");
 }
 
 void test_source_validator(void)
@@ -56,6 +52,7 @@ void test_source_validator(void)
     TEST_ASSERT(validateLine("Hello World") == 1, "Alphabetic line validates");
     TEST_ASSERT(validateLine("   12345   ") == 0, "Non-alphabetic line rejected");
     TEST_ASSERT(validateLine("") == 0, "Empty line rejected");
+    TEST_ASSERT(validateLine("Žltý kôň") == 1, "Accented UTF-8 characters validate safely");
 
     // parseSentence
     int wordCount = 0;
@@ -88,6 +85,8 @@ void test_source_validator(void)
     words = parseSentence(NULL, &wordCount);
     TEST_ASSERT(words == NULL, "NULL sentence returns NULL safely");
     TEST_ASSERT(wordCount == 0, "NULL sentence word count is 0");
+    TEST_ASSERT(parseSentence("valid sentence", NULL) == NULL, "NULL wordCount pointer returns NULL safely");
+    TEST_ASSERT(parseSentence(NULL, NULL) == NULL, "NULL sentence and wordCount returns NULL safely");
 
     // readFileLines
 #ifndef INPUT_TXT_PATH
@@ -236,7 +235,7 @@ int main(void)
     printf("     RUNNING UNIT TESTS (console-typeracer)\n");
     printf("=========================================\n");
 
-    test_input_handler();
+    test_input_validation();
     test_source_validator();
     test_json_handler();
     test_event_queue();

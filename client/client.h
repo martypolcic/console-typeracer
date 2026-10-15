@@ -13,11 +13,9 @@
 
 #include "terminal.h"
 #include "sourceValidator.h"
-#include "inputHandler.h"
 #include "typeracerStructures.h"
 #include "../sockets-lib/socket.h"
 #include "jsonHandler.h"
-#include "server.h"
 
 void gameLoop(Client *client);
 int menu();
@@ -28,6 +26,4 @@ void gameDestroy(Client *client, SocketsData *socketsData, Times *times);       
 void showProgress(int *progress, int playerCount, int wordCount, char **playerNames); // done
 void showSentence(Client *client);                                                    // done
 void showResults(Client *client, Times *timesTaken, char *sentence);                  // done
-int getRemainingChars(char **words, int currentWordIndex, int wordCount);             // done
-// Function to calculate elapsed time in seconds
-double calculateElapsedTime(struct timeval start, struct timeval end);
+int getRemainingChars(char **words, int currentWordIndex, int wordCount);
