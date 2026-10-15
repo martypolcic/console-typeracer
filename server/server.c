@@ -445,7 +445,7 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
             char *buf = serializeSocketsData(game->socketsData, i);
             if (buf)
             {
-                char lenBuf[11] = {0};
+                char lenBuf[32] = {0};
                 snprintf(lenBuf, sizeof(lenBuf), "%zu", strlen(buf));
                 send_all(game->players[i]->activeSocket, lenBuf, 10);
                 send_all(game->players[i]->activeSocket, buf, strlen(buf));

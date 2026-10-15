@@ -30,7 +30,7 @@ function fetchJson(url, options = {}) {
 async function run() {
   console.log('--- Starting Integration Test: C Engine Daemon + Gateway ---');
 
-  const serverBin = path.join(__dirname, '..', 'build', 'server', 'server');
+  const serverBin = process.env.SERVER_BIN || path.join(__dirname, '..', 'build', 'server', 'server');
   const inputFile = path.join(__dirname, '..', 'input.txt');
 
   // Spawn C daemon
