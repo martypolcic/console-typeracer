@@ -257,17 +257,28 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
   // Create TCP connection to C server daemon
   const tcpClient = net.createConnection({ host: C_SERVER_HOST, port: C_SERVER_PORT }, () => {
     console.log(`[TCP] Connected to engine for ${playerName} in ${roomCode}`);
+    tcpClient.setKeepAlive(true, 15000);
     // Send JOIN handshake
     tcpClient.write(`JOIN ${roomCode} ${playerName}\n`);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'LOBBY_WAITING',
+        roomCode,
+        playerName,
+        message: 'Connected to engine. Waiting for players to join...'
+      }));
+    }
   });
 
-  tcpClient.setTimeout(5000);
+  // Allow up to 10 minutes while waiting in lobby for second player to connect
+  const LOBBY_WAIT_TIMEOUT_MS = 600000;
+  tcpClient.setTimeout(LOBBY_WAIT_TIMEOUT_MS);
   tcpClient.on('timeout', () => {
     if (!hasStarted) {
-      console.warn(`[TCP] Connection timeout waiting for engine handshake: ${playerName} in ${roomCode}`);
+      console.warn(`[TCP] Lobby wait timed out waiting for opponents: ${playerName} in ${roomCode}`);
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', message: 'Engine connection timeout' }));
-        ws.close(1011, 'Engine connection timeout');
+        ws.send(JSON.stringify({ type: 'ERROR', message: 'Lobby timed out waiting for opponents' }));
+        ws.close(1011, 'Lobby timed out');
       }
       tcpClient.destroy();
     } else {
