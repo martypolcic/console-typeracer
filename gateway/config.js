@@ -46,6 +46,18 @@ const config = {
   MAX_LOBBY_CAPACITY: parsePositiveInt(
     process.env.MAX_LOBBY_CAPACITY || process.env.DEFAULT_MAX_PLAYERS,
     4
+  ),
+
+  // Post-finish grace period countdown (seconds) after first player crosses the finish line
+  FINISH_GRACE_TIMEOUT_SEC: parsePositiveInt(
+    process.env.FINISH_GRACE_TIMEOUT_SEC,
+    20
+  ),
+
+  // Maximum race duration ceiling (seconds) before forcing DNF on unfinished racers
+  RACE_MAX_DURATION_SEC: parsePositiveInt(
+    process.env.RACE_MAX_DURATION_SEC,
+    60
   )
 };
 

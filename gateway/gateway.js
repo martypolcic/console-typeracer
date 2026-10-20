@@ -13,7 +13,9 @@ const {
   TCP_COMMAND_TIMEOUT_MS,
   TCP_KEEPALIVE_MS,
   WS_HEARTBEAT_INTERVAL_MS,
-  MAX_LOBBY_CAPACITY
+  MAX_LOBBY_CAPACITY,
+  FINISH_GRACE_TIMEOUT_SEC,
+  RACE_MAX_DURATION_SEC
 } = config;
 
 /**
@@ -491,6 +493,14 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
         tcpClient.write('2');
         const dummyTime = '0.00\0';
         tcpClient.write(dummyTime);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'PLAYER_FINISHED_ACK',
+            roomCode,
+            playerName,
+            message: 'Sentence completion registered by server'
+          }));
+        }
       }
     } catch (err) {
       console.error('[WS Message Error]', err);
@@ -519,4 +529,6 @@ server.listen(HTTP_PORT, () => {
   console.log(`  - TCP KeepAlive      : ${TCP_KEEPALIVE_MS} ms`);
   console.log(`  - WS Heartbeat       : ${WS_HEARTBEAT_INTERVAL_MS} ms`);
   console.log(`  - Max Lobby Capacity : ${MAX_LOBBY_CAPACITY}`);
+  console.log(`  - Finish Grace Window: ${FINISH_GRACE_TIMEOUT_SEC} s`);
+  console.log(`  - Max Race Ceiling   : ${RACE_MAX_DURATION_SEC} s`);
 });

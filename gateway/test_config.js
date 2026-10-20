@@ -10,6 +10,8 @@ delete process.env.TCP_COMMAND_TIMEOUT_MS;
 delete process.env.TCP_KEEPALIVE_MS;
 delete process.env.WS_HEARTBEAT_INTERVAL_MS;
 delete process.env.MAX_LOBBY_CAPACITY;
+delete process.env.FINISH_GRACE_TIMEOUT_SEC;
+delete process.env.RACE_MAX_DURATION_SEC;
 
 // Clear require cache to re-evaluate config module
 delete require.cache[require.resolve('./config')];
@@ -23,6 +25,8 @@ assert.strictEqual(defaultConfig.TCP_COMMAND_TIMEOUT_MS, 2500);
 assert.strictEqual(defaultConfig.TCP_KEEPALIVE_MS, 15000);
 assert.strictEqual(defaultConfig.WS_HEARTBEAT_INTERVAL_MS, 30000);
 assert.strictEqual(defaultConfig.MAX_LOBBY_CAPACITY, 4);
+assert.strictEqual(defaultConfig.FINISH_GRACE_TIMEOUT_SEC, 20);
+assert.strictEqual(defaultConfig.RACE_MAX_DURATION_SEC, 60);
 
 console.log('✓ Config defaults validated successfully');
 
@@ -35,6 +39,8 @@ process.env.TCP_COMMAND_TIMEOUT_MS = '5000';
 process.env.TCP_KEEPALIVE_MS = '30000';
 process.env.WS_HEARTBEAT_INTERVAL_MS = '10000';
 process.env.MAX_LOBBY_CAPACITY = '6';
+process.env.FINISH_GRACE_TIMEOUT_SEC = '15';
+process.env.RACE_MAX_DURATION_SEC = '45';
 
 delete require.cache[require.resolve('./config')];
 const customConfig = require('./config');
@@ -47,6 +53,8 @@ assert.strictEqual(customConfig.TCP_COMMAND_TIMEOUT_MS, 5000);
 assert.strictEqual(customConfig.TCP_KEEPALIVE_MS, 30000);
 assert.strictEqual(customConfig.WS_HEARTBEAT_INTERVAL_MS, 10000);
 assert.strictEqual(customConfig.MAX_LOBBY_CAPACITY, 6);
+assert.strictEqual(customConfig.FINISH_GRACE_TIMEOUT_SEC, 15);
+assert.strictEqual(customConfig.RACE_MAX_DURATION_SEC, 45);
 
 console.log('✓ Custom environment overrides validated successfully');
 
