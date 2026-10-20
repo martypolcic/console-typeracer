@@ -3,15 +3,23 @@ const net = require('net');
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
 const { WebSocketServer, WebSocket } = require('ws');
+const config = require('./config');
 
-const HTTP_PORT = parseInt(process.env.PORT || '8080', 10);
-const C_SERVER_HOST = process.env.C_SERVER_HOST || '127.0.0.1';
-const C_SERVER_PORT = parseInt(process.env.C_SERVER_PORT || '54897', 10);
+const {
+  HTTP_PORT,
+  C_SERVER_HOST,
+  C_SERVER_PORT,
+  LOBBY_TIMEOUT_MS,
+  TCP_COMMAND_TIMEOUT_MS,
+  TCP_KEEPALIVE_MS,
+  WS_HEARTBEAT_INTERVAL_MS,
+  MAX_LOBBY_CAPACITY
+} = config;
 
 /**
  * Send a single-shot ASCII command to the C server daemon via TCP
  */
-function sendTcpCommand(cmd, timeoutMs = 2500) {
+function sendTcpCommand(cmd, timeoutMs = TCP_COMMAND_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const client = net.createConnection({ host: C_SERVER_HOST, port: C_SERVER_PORT }, () => {
       client.write(cmd.endsWith('\n') ? cmd : cmd + '\n');
@@ -114,7 +122,7 @@ const server = http.createServer(async (req, res) => {
           try {
             const body = JSON.parse(bodyStr);
             if (body.maxPlayers && Number.isInteger(body.maxPlayers)) {
-              maxPlayers = Math.max(1, Math.min(8, body.maxPlayers));
+              maxPlayers = Math.max(1, Math.min(MAX_LOBBY_CAPACITY, body.maxPlayers));
             }
             if (body.code && typeof body.code === 'string') {
               customCode = body.code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
@@ -257,7 +265,9 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
   // Create TCP connection to C server daemon
   const tcpClient = net.createConnection({ host: C_SERVER_HOST, port: C_SERVER_PORT }, () => {
     console.log(`[TCP] Connected to engine for ${playerName} in ${roomCode}`);
-    tcpClient.setKeepAlive(true, 15000);
+    if (TCP_KEEPALIVE_MS > 0) {
+      tcpClient.setKeepAlive(true, TCP_KEEPALIVE_MS);
+    }
     // Send JOIN handshake
     tcpClient.write(`JOIN ${roomCode} ${playerName}\n`);
     if (ws.readyState === WebSocket.OPEN) {
@@ -270,16 +280,36 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
     }
   });
 
-  // Allow up to 10 minutes while waiting in lobby for second player to connect
-  const LOBBY_WAIT_TIMEOUT_MS = 600000;
-  tcpClient.setTimeout(LOBBY_WAIT_TIMEOUT_MS);
+  // Setup WebSocket ping/pong heartbeat to prevent proxy idle dropouts
+  let heartbeatTimer = null;
+  if (WS_HEARTBEAT_INTERVAL_MS > 0) {
+    heartbeatTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      } else {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }, WS_HEARTBEAT_INTERVAL_MS);
+  }
+
+  const cleanupHeartbeat = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  // Wait in lobby for opponents with configurable timeout
+  tcpClient.setTimeout(LOBBY_TIMEOUT_MS);
   tcpClient.on('timeout', () => {
     if (!hasStarted) {
-      console.warn(`[TCP] Lobby wait timed out waiting for opponents: ${playerName} in ${roomCode}`);
+      console.warn(`[TCP] Lobby wait timed out waiting for opponents (${LOBBY_TIMEOUT_MS}ms): ${playerName} in ${roomCode}`);
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ERROR', message: 'Lobby timed out waiting for opponents' }));
         ws.close(1011, 'Lobby timed out');
       }
+      cleanupHeartbeat();
       tcpClient.destroy();
     } else {
       tcpClient.setTimeout(0);
@@ -429,6 +459,7 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
 
   tcpClient.on('error', err => {
     console.error(`[TCP Error] ${err.message}`);
+    cleanupHeartbeat();
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ERROR', message: 'Engine connection error' }));
       ws.close();
@@ -437,6 +468,7 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
 
   tcpClient.on('end', () => {
     console.log(`[TCP] Engine closed connection for ${playerName}`);
+    cleanupHeartbeat();
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -467,11 +499,13 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
 
   ws.on('close', () => {
     console.log(`[WS] Client closed connection for ${playerName}`);
+    cleanupHeartbeat();
     tcpClient.destroy();
   });
 
   ws.on('error', err => {
     console.error(`[WS Error] ${err.message}`);
+    cleanupHeartbeat();
     tcpClient.destroy();
   });
 });
@@ -479,4 +513,10 @@ wss.on('connection', (ws, req, { roomCode, playerName }) => {
 server.listen(HTTP_PORT, () => {
   console.log(`TypeRacer Dual-Transport Gateway listening on port ${HTTP_PORT}`);
   console.log(`Forwarding game TCP sessions to ${C_SERVER_HOST}:${C_SERVER_PORT}`);
+  console.log(`[Gateway] Active Connection Ruleset:`);
+  console.log(`  - Lobby Wait Timeout : ${LOBBY_TIMEOUT_MS} ms (${(LOBBY_TIMEOUT_MS / 1000).toFixed(1)}s)`);
+  console.log(`  - TCP Command Timeout: ${TCP_COMMAND_TIMEOUT_MS} ms`);
+  console.log(`  - TCP KeepAlive      : ${TCP_KEEPALIVE_MS} ms`);
+  console.log(`  - WS Heartbeat       : ${WS_HEARTBEAT_INTERVAL_MS} ms`);
+  console.log(`  - Max Lobby Capacity : ${MAX_LOBBY_CAPACITY}`);
 });
