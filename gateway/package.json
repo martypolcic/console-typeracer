@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node gateway.js",
-    "test": "node test_gateway.js"
+    "test": "node test_config.js && node test_gateway.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
