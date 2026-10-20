@@ -472,6 +472,25 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
 
     thread_printf("Central Room Hub started event loop (totalWordCount=%d)\n", totalWordCount);
 
+    int raceMaxDurationSec = 60;
+    const char *envRaceMax = getenv("RACE_MAX_DURATION_SEC");
+    if (envRaceMax)
+    {
+        int p = atoi(envRaceMax);
+        if (p > 0) raceMaxDurationSec = p;
+    }
+
+    int finishGraceTimeoutSec = 20;
+    const char *envGrace = getenv("FINISH_GRACE_TIMEOUT_SEC");
+    if (envGrace)
+    {
+        int p = atoi(envGrace);
+        if (p > 0) finishGraceTimeoutSec = p;
+    }
+
+    struct timespec firstFinishTime = {0, 0};
+    bool hasFirstFinisher = false;
+
     // CENTRAL ROOM HUB EVENT LOOP:
     // Exclusively owns game state and sequentially processes client events.
     while (game->finishedPlayers < game->maxPlayerCount)
@@ -480,9 +499,9 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
         clock_gettime(CLOCK_MONOTONIC, &now);
         double totalElapsed = (now.tv_sec - raceStartTime.tv_sec) +
                               (now.tv_nsec - raceStartTime.tv_nsec) / 1e9;
-        if (totalElapsed > 180.0)
+        if (totalElapsed > (double)raceMaxDurationSec)
         {
-            thread_printf("Race exceeded maximum duration (180s). Timing out unfinished players.\n");
+            thread_printf("Race exceeded maximum duration (%ds). Timing out unfinished players.\n", raceMaxDurationSec);
             for (int i = 0; i < game->maxPlayerCount; i++)
             {
                 Player *p = game->players[i];
@@ -495,6 +514,28 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
             }
             broadcastProgress(game, game->refreshingData);
             break;
+        }
+
+        if (hasFirstFinisher)
+        {
+            double graceElapsed = (now.tv_sec - firstFinishTime.tv_sec) +
+                                  (now.tv_nsec - firstFinishTime.tv_nsec) / 1e9;
+            if (graceElapsed >= (double)finishGraceTimeoutSec)
+            {
+                thread_printf("Post-finish grace period (%ds) expired. Timing out remaining unfinished players as DNF.\n", finishGraceTimeoutSec);
+                for (int i = 0; i < game->maxPlayerCount; i++)
+                {
+                    Player *p = game->players[i];
+                    if (p && !p->finished)
+                    {
+                        p->finished = true;
+                        p->timeTaken = -1.0; // DNF
+                        game->finishedPlayers++;
+                    }
+                }
+                broadcastProgress(game, game->refreshingData);
+                break;
+            }
         }
 
         GameEvent ev;
@@ -555,6 +596,13 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
                     thread_printf("Player %d (%s) finished in %.2f s (authoritative)\n",
                                   ev.playerIndex, player->name, player->timeTaken);
 
+                    if (!hasFirstFinisher)
+                    {
+                        hasFirstFinisher = true;
+                        clock_gettime(CLOCK_MONOTONIC, &firstFinishTime);
+                        thread_printf("First racer finished! Started %d-second post-finish grace countdown for remaining players.\n", finishGraceTimeoutSec);
+                    }
+
                     broadcastProgress(game, game->refreshingData);
                 }
                 else
@@ -597,7 +645,7 @@ int runGameHub(Game *game, EventQueue *eventQueue, pthread_mutex_t *startMutex, 
     // Unblock any reader thread that may still be waiting inside recv() (e.g. on timeout or abort)
     for (int i = 0; i < game->maxPlayerCount; i++)
     {
-        if (game->players[i] && !game->players[i]->finished && !game->players[i]->disconnected && game->players[i]->activeSocket >= 0)
+        if (game->threads[i] != 0 && game->players[i] && game->players[i]->activeSocket >= 0)
         {
             shutdown(game->players[i]->activeSocket, SHUT_RD);
         }

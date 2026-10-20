@@ -33,8 +33,13 @@ async function run() {
   const serverBin = process.env.SERVER_BIN || path.join(__dirname, '..', 'build', 'server', 'server');
   const inputFile = path.join(__dirname, '..', 'input.txt');
 
-  // Spawn C daemon
+  // Spawn C daemon with 1-second finish grace window for test verification
   const engineProc = spawn(serverBin, ['--daemon', String(C_PORT), inputFile, '2'], {
+    env: {
+      ...process.env,
+      FINISH_GRACE_TIMEOUT_SEC: '1',
+      RACE_MAX_DURATION_SEC: '10'
+    },
     stdio: 'inherit'
   });
 
@@ -55,14 +60,20 @@ async function run() {
   };
 
   try {
-    // Wait for services to start
-    await new Promise(r => setTimeout(r, 600));
+    // Wait for services to be ready
+    let health = null;
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      try {
+        health = await fetchJson(`http://127.0.0.1:${HTTP_PORT}/api/health`);
+        if (health.status === 200 && health.body.status === 'healthy') break;
+      } catch (_) {}
+    }
 
     // 1. Health check
     console.log('Testing GET /api/health...');
-    const health = await fetchJson(`http://127.0.0.1:${HTTP_PORT}/api/health`);
-    console.log('Health response:', health.body);
-    if (health.status !== 200 || health.body.status !== 'healthy') {
+    console.log('Health response:', health ? health.body : null);
+    if (!health || health.status !== 200 || health.body.status !== 'healthy') {
       throw new Error(`Health check failed: ${JSON.stringify(health)}`);
     }
 
@@ -165,6 +176,52 @@ async function run() {
     if (largeRes.status !== 413) {
       throw new Error(`Expected 413 on oversized payload, got ${largeRes.status}`);
     }
+
+    // 6. Test AFK opponent post-finish grace period timeout
+    await new Promise(r => setTimeout(r, 200));
+    console.log('\n--- Testing AFK Opponent Post-Finish Grace Timeout ---');
+    const afkCreate = await fetchJson(`http://127.0.0.1:${HTTP_PORT}/api/lobbies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'AFKROOM', maxPlayers: 2 })
+    });
+    if (afkCreate.status !== 201) throw new Error('Failed to create AFK test room');
+
+    console.log('Connecting 1 Active racer and 1 AFK racer to AFKROOM...');
+    const afkTestPromise = new Promise((resolve, reject) => {
+      const activeWs = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}/ws/lobbies/AFKROOM?player=ActiveRacer`);
+      const afkWs = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}/ws/lobbies/AFKROOM?player=AfkRacer`);
+      let gotAck = false;
+
+      activeWs.on('message', data => {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'LOBBY_STATE') {
+          const wordCount = msg.sentence ? msg.sentence.trim().split(/\s+/).length : 1;
+          for (let i = 0; i < wordCount - 1; i++) {
+            setTimeout(() => activeWs.send(JSON.stringify({ type: 'WORD_DONE' })), 10 * (i + 1));
+          }
+          setTimeout(() => activeWs.send(JSON.stringify({ type: 'SENTENCE_FINISHED' })), 10 * wordCount + 20);
+        } else if (msg.type === 'PLAYER_FINISHED_ACK') {
+          gotAck = true;
+          console.log('Active racer received PLAYER_FINISHED_ACK!');
+        } else if (msg.type === 'RACE_RESULTS') {
+          console.log('AFK Room race results arrived:', msg.times);
+          // Active racer has valid time (> 0), AFK racer must have -1.0 (DNF)
+          if (msg.times[0] > 0 && msg.times[1] === -1.0) {
+            console.log('✓ Verified: AFK player received DNF (-1.0) after grace countdown!');
+            activeWs.close();
+            afkWs.close();
+            resolve();
+          } else {
+            reject(new Error(`Unexpected times for AFK test: ${JSON.stringify(msg.times)}`));
+          }
+        }
+      });
+      activeWs.on('error', reject);
+      afkWs.on('error', reject);
+    });
+
+    await afkTestPromise;
 
     console.log('\n[SUCCESS] All REST and WebSocket Gateway integration tests PASSED!\n');
     cleanup();
